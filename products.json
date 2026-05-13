@@ -1,0 +1,23 @@
+[
+    {
+        "name": "WD_BLACK_SN850X_2TB",
+        "url": "https://prod.danawa.com/info/?pcode=17788451",
+        "target_price": 520000
+    },
+    {
+        "name": "SK_Hynix_P41_2TB",
+        "url": "https://prod.danawa.com/info/?pcode=17000984",
+        "target_price": 620000
+
+    },
+    {
+        "name": "SK_Hynix_P51_2TB",
+        "url": "https://prod.danawa.com/info/?pcode=72823133",
+        "target_price": 850000
+    },
+    {
+        "name": "Samsung_990_EVO_Plus_2TB",
+        "url": "https://prod.danawa.com/info/?pcode=69869573",
+        "target_price": 550000
+    }
+]
