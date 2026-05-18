@@ -60,6 +60,8 @@ cover/
 local_settings.py
 db.sqlite3
 db.sqlite3-journal
+price_tracker.db
+price_tracker.db-journal
 
 # Flask stuff:
 instance/

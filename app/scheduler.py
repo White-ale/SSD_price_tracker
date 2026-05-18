@@ -5,7 +5,12 @@ from datetime import datetime
 from app.config import CHECK_INTERVAL_SECONDS, PRODUCTS_FILE, REQUEST_DELAY_SECONDS
 from app.crawler import get_price
 from app.notifier import send_discord_message
-from app.storage import get_last_price, save_to_csv
+from app.storage import (
+    get_last_price,
+    initialize_database,
+    save_price_record,
+    upsert_product,
+)
 
 
 def load_products():
@@ -17,9 +22,10 @@ def check_product(item):
     name = item["name"]
     url = item["url"]
     target_price = item["target_price"]
+    product_id = upsert_product(name, url, target_price)
 
     current_price = get_price(url)
-    last_price = get_last_price(name)
+    last_price = get_last_price(product_id)
 
     if current_price is None:
         print(f"[{name}] price not found.")
@@ -29,7 +35,7 @@ def check_product(item):
         print(f"[{name}] no change ({current_price} KRW)")
         return
 
-    save_to_csv(name, current_price)
+    save_price_record(product_id, name, current_price)
 
     if current_price <= target_price:
         message = (
@@ -43,6 +49,7 @@ def check_product(item):
 
 
 def run_monitor():
+    initialize_database()
     products = load_products()
 
     while True:

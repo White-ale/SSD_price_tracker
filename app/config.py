@@ -3,6 +3,7 @@ import os
 
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 PRODUCTS_FILE = os.path.join(BASE_DIR, "products.json")
+DATABASE_FILE = os.path.join(BASE_DIR, "price_tracker.db")
 CHECK_INTERVAL_SECONDS = 60 * 60
 REQUEST_DELAY_SECONDS = 3
 
