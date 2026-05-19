@@ -1,5 +1,5 @@
 import os
-
+#config.py는 프로그램이 실행될 때 필요한 경로, 주기, 환경변수, 요청 헤더 같은 설정값을 중앙에서 관리하는 파일이다.
 
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 PRODUCTS_FILE = os.path.join(BASE_DIR, "products.json")

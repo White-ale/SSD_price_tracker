@@ -46,7 +46,8 @@ def initialize_database():
         connection.commit()
 
 
-def upsert_product(name, url, target_price):
+def upsert_product(name, url, target_price): 
+    #DB의 PRODUCTS 테이블에 상품 정보를 저장하거나 업데이트하는 함수. 상품 이름을 기준으로 URL과 목표 가격을 저장하거나 업데이트
     now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
     with get_connection() as connection:

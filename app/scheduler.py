@@ -48,20 +48,25 @@ def check_product(item):
     send_discord_message(message)
 
 
-def run_monitor():
+def run_once():
     initialize_database()
     products = load_products()
 
+    print(f"\n--- {datetime.now().strftime('%H:%M:%S')} price check started ---")
+
+    for item in products:
+        try:
+            check_product(item)
+        except Exception as error:
+            print(f"[{item.get('name', 'unknown')}] monitoring failed: {error}")
+
+        time.sleep(REQUEST_DELAY_SECONDS)
+
+    print("\n--- price check finished. ---")
+
+
+def run_monitor():
     while True:
-        print(f"\n--- {datetime.now().strftime('%H:%M:%S')} price check started ---")
-
-        for item in products:
-            try:
-                check_product(item)
-            except Exception as error:
-                print(f"[{item.get('name', 'unknown')}] monitoring failed: {error}")
-
-            time.sleep(REQUEST_DELAY_SECONDS)
-
-        print(f"\n--- price check finished. Waiting {CHECK_INTERVAL_SECONDS} seconds. ---")
+        run_once()
+        print(f"\n--- waiting {CHECK_INTERVAL_SECONDS} seconds. ---")
         time.sleep(CHECK_INTERVAL_SECONDS)
