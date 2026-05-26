@@ -14,6 +14,11 @@ def parse_args():
         action="store_true",
         help="Keep checking prices at the configured interval.",
     )
+    mode_group.add_argument(
+        "--api",
+        action="store_true",
+        help="Run the FastAPI server.",
+    )
     return parser.parse_args()
 
 
@@ -24,6 +29,12 @@ def main():
         from app.scheduler import run_once
 
         run_once()
+        return
+
+    if args.api:
+        import uvicorn
+
+        uvicorn.run("app.api:app", host="127.0.0.1", port=8000)
         return
 
     from app.scheduler import run_monitor

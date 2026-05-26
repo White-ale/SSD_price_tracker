@@ -8,6 +8,11 @@ def get_connection():
     return sqlite3.connect(DATABASE_FILE)
 
 
+def rows_to_dicts(cursor, rows):
+    columns = [column[0] for column in cursor.description]
+    return [dict(zip(columns, row)) for row in rows]
+
+
 def initialize_database():
     with get_connection() as connection:
         cursor = connection.cursor()
@@ -46,8 +51,8 @@ def initialize_database():
         connection.commit()
 
 
-def upsert_product(name, url, target_price): 
-    #DB의 PRODUCTS 테이블에 상품 정보를 저장하거나 업데이트하는 함수. 상품 이름을 기준으로 URL과 목표 가격을 저장하거나 업데이트
+def upsert_product(name, url, target_price):
+    # Keep products.json and the products table in sync by product name.
     now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
     with get_connection() as connection:
@@ -109,3 +114,107 @@ def get_last_price(product_id):
         return 0
 
     return row[0]
+
+
+def list_products():
+    initialize_database()
+
+    with get_connection() as connection:
+        cursor = connection.cursor()
+        cursor.execute(
+            """
+            SELECT id, name, url, target_price, created_at
+            FROM products
+            ORDER BY id
+            """
+        )
+        return rows_to_dicts(cursor, cursor.fetchall())
+
+
+def get_product(product_id):
+    initialize_database()
+
+    with get_connection() as connection:
+        cursor = connection.cursor()
+        cursor.execute(
+            """
+            SELECT id, name, url, target_price, created_at
+            FROM products
+            WHERE id = ?
+            """,
+            (product_id,),
+        )
+        row = cursor.fetchone()
+
+    if row is None:
+        return None
+
+    return {
+        "id": row[0],
+        "name": row[1],
+        "url": row[2],
+        "target_price": row[3],
+        "created_at": row[4],
+    }
+
+
+def list_price_records(product_id, limit=30):
+    initialize_database()
+
+    with get_connection() as connection:
+        cursor = connection.cursor()
+        cursor.execute(
+            """
+            SELECT id, product_id, price, checked_at
+            FROM price_records
+            WHERE product_id = ?
+            ORDER BY checked_at DESC, id DESC
+            LIMIT ?
+            """,
+            (product_id, limit),
+        )
+        return rows_to_dicts(cursor, cursor.fetchall())
+
+
+def get_price_summary():
+    initialize_database()
+
+    with get_connection() as connection:
+        cursor = connection.cursor()
+        cursor.execute(
+            """
+            SELECT
+                products.id,
+                products.name,
+                products.url,
+                products.target_price,
+                latest.price AS latest_price,
+                latest.checked_at AS latest_checked_at,
+                MIN(price_records.price) AS lowest_price,
+                MAX(price_records.price) AS highest_price,
+                COUNT(price_records.id) AS record_count
+            FROM products
+            LEFT JOIN price_records
+                ON price_records.product_id = products.id
+            LEFT JOIN price_records AS latest
+                ON latest.id = (
+                    SELECT id
+                    FROM price_records
+                    WHERE product_id = products.id
+                    ORDER BY checked_at DESC, id DESC
+                    LIMIT 1
+                )
+            GROUP BY products.id
+            ORDER BY products.id
+            """
+        )
+        summaries = rows_to_dicts(cursor, cursor.fetchall())
+
+    for summary in summaries:
+        latest_price = summary["latest_price"]
+        target_price = summary["target_price"]
+        summary["is_target_reached"] = (
+            latest_price is not None and latest_price <= target_price
+        )
+
+    return summaries
