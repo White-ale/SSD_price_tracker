@@ -39,6 +39,7 @@ def root():
         checked_at = item["latest_checked_at"] or "-"
         status = "Reached" if item["is_target_reached"] else "Watching"
         status_class = "reached" if item["is_target_reached"] else "watching"
+        price_chart = build_price_chart(item["id"])
 
         rows.append(
             f"""
@@ -47,6 +48,7 @@ def root():
                 <td>{latest_price}</td>
                 <td>{target_price}</td>
                 <td>{lowest_price}</td>
+                <td>{price_chart}</td>
                 <td>{escape(checked_at)}</td>
                 <td><span class="status {status_class}">{status}</span></td>
             </tr>
@@ -109,6 +111,7 @@ def root():
                 border-bottom: 1px solid #e8edf5;
                 text-align: left;
                 font-size: 14px;
+                vertical-align: middle;
             }}
 
             th {{
@@ -139,6 +142,28 @@ def root():
             .watching {{
                 background: #fff1d6;
                 color: #835300;
+            }}
+
+            .chart {{
+                display: block;
+                width: 180px;
+                height: 52px;
+            }}
+
+            .chart-line {{
+                fill: none;
+                stroke: #2458d3;
+                stroke-linecap: round;
+                stroke-linejoin: round;
+                stroke-width: 3;
+            }}
+
+            .chart-area {{
+                fill: #eef3fb;
+            }}
+
+            .muted {{
+                color: #7a869a;
             }}
 
             @media (max-width: 760px) {{
@@ -176,6 +201,7 @@ def root():
                         <th>Latest</th>
                         <th>Target</th>
                         <th>Lowest</th>
+                        <th>Trend</th>
                         <th>Checked At</th>
                         <th>Status</th>
                     </tr>
@@ -195,6 +221,54 @@ def format_price(price):
         return "-"
 
     return f"{price:,} KRW"
+
+
+def build_price_chart(product_id):
+    records = list_price_records(product_id, limit=30)
+    prices = [record["price"] for record in reversed(records)]
+
+    if not prices:
+        return '<span class="muted">-</span>'
+
+    width = 180
+    height = 52
+    padding = 5
+    min_price = min(prices)
+    max_price = max(prices)
+    price_range = max_price - min_price
+    usable_width = width - padding * 2
+    usable_height = height - padding * 2
+    points = []
+
+    if len(prices) == 1:
+        points = [(padding, height / 2), (width - padding, height / 2)]
+    else:
+        for index, price in enumerate(prices):
+            x = padding + (usable_width * index / (len(prices) - 1))
+
+            if price_range == 0:
+                y = height / 2
+            else:
+                y = padding + usable_height * (max_price - price) / price_range
+
+            points.append((x, y))
+
+    line_points = " ".join(f"{x:.1f},{y:.1f}" for x, y in points)
+    area_points = (
+        f"{padding},{height - padding} "
+        f"{line_points} "
+        f"{width - padding},{height - padding}"
+    )
+    label = escape(
+        f"Recent price trend from {min_price:,} KRW to {max_price:,} KRW"
+    )
+
+    return f"""
+    <svg class="chart" viewBox="0 0 {width} {height}" role="img" aria-label="{label}">
+        <polygon class="chart-area" points="{area_points}"></polygon>
+        <polyline class="chart-line" points="{line_points}"></polyline>
+    </svg>
+    """
 
 
 @app.get("/health")
