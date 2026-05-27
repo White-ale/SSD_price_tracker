@@ -19,6 +19,11 @@ def parse_args():
         action="store_true",
         help="Run the FastAPI server.",
     )
+    parser.add_argument(
+        "--reload",
+        action="store_true",
+        help="Reload the API server when code changes. Use with --api.",
+    )
     return parser.parse_args()
 
 
@@ -34,7 +39,7 @@ def main():
     if args.api:
         import uvicorn
 
-        uvicorn.run("app.api:app", host="127.0.0.1", port=8000)
+        uvicorn.run("app.api:app", host="127.0.0.1", port=8000, reload=args.reload)
         return
 
     from app.scheduler import run_monitor
