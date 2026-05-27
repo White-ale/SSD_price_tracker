@@ -1,8 +1,9 @@
 from html import escape
 
 from fastapi import FastAPI, HTTPException, Query
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, RedirectResponse
 
+from app.scheduler import load_products, run_once
 from app.storage import (
     get_price_summary,
     get_product,
@@ -11,7 +12,6 @@ from app.storage import (
     list_products,
     upsert_product,
 )
-from app.scheduler import load_products
 
 app = FastAPI(title="SSD Price Tracker API")
 
@@ -96,6 +96,28 @@ def root():
                 color: #2458d3;
                 text-decoration: none;
                 font-weight: 600;
+            }}
+
+            .actions {{
+                display: flex;
+                align-items: center;
+                gap: 12px;
+            }}
+
+            button {{
+                cursor: pointer;
+                border: 0;
+                border-radius: 6px;
+                background: #2458d3;
+                color: white;
+                padding: 9px 14px;
+                font: inherit;
+                font-size: 14px;
+                font-weight: 700;
+            }}
+
+            button:hover {{
+                background: #1d48ad;
             }}
 
             table {{
@@ -192,7 +214,12 @@ def root():
         <main>
             <header>
                 <h1>SSD Price Tracker</h1>
-                <a href="/docs">API Docs</a>
+                <div class="actions">
+                    <form action="/check-now" method="post" onsubmit="return showChecking(this);">
+                        <button type="submit">Check Now</button>
+                    </form>
+                    <a href="/docs">API Docs</a>
+                </div>
             </header>
             <table>
                 <thead>
@@ -211,9 +238,23 @@ def root():
                 </tbody>
             </table>
         </main>
+        <script>
+            function showChecking(form) {{
+                const button = form.querySelector("button");
+                button.disabled = true;
+                button.textContent = "Checking...";
+                return true;
+            }}
+        </script>
     </body>
     </html>
     """
+
+
+@app.post("/check-now")
+def check_now():
+    run_once()
+    return RedirectResponse(url="/", status_code=303)
 
 
 def format_price(price):
