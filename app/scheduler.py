@@ -31,11 +31,11 @@ def check_product(item):
         print(f"[{name}] price not found.")
         return
 
+    save_price_record(product_id, name, current_price)
+
     if current_price == last_price:
         print(f"[{name}] no change ({current_price} KRW)")
         return
-
-    save_price_record(product_id, name, current_price)
 
     if current_price <= target_price:
         message = (
