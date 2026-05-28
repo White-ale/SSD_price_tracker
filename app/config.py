@@ -2,10 +2,6 @@ import os
 #config.py는 프로그램이 실행될 때 필요한 경로, 주기, 환경변수, 요청 헤더 같은 설정값을 중앙에서 관리하는 파일이다.
 
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-PRODUCTS_FILE = os.path.join(BASE_DIR, "products.json")
-DATABASE_FILE = os.path.join(BASE_DIR, "price_tracker.db")
-CHECK_INTERVAL_SECONDS = 60 * 60
-REQUEST_DELAY_SECONDS = 3
 
 
 def load_env_file(path=".env"):
@@ -25,8 +21,23 @@ def load_env_file(path=".env"):
             os.environ.setdefault(key.strip(), value.strip().strip('"').strip("'"))
 
 
+def get_int_env(name, default):
+    value = os.getenv(name)
+
+    if value is None or value.strip() == "":
+        return default
+
+    return int(value)
+
+
 load_env_file()
 
+PRODUCTS_FILE = os.path.join(BASE_DIR, "products.json")
+DATABASE_FILE = os.path.join(BASE_DIR, "price_tracker.db")
+CHECK_INTERVAL_SECONDS = get_int_env("CHECK_INTERVAL_SECONDS", 60 * 60)
+REQUEST_DELAY_SECONDS = get_int_env("REQUEST_DELAY_SECONDS", 3)
+API_HOST = os.getenv("API_HOST", "127.0.0.1")
+API_PORT = get_int_env("API_PORT", 8000)
 DISCORD_WEBHOOK_URL = os.getenv("DISCORD_WEBHOOK_URL", "")
 HEADERS = {
     "User-Agent": (

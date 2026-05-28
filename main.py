@@ -39,7 +39,9 @@ def main():
     if args.api:
         import uvicorn
 
-        uvicorn.run("app.api:app", host="127.0.0.1", port=8000, reload=args.reload)
+        from app.config import API_HOST, API_PORT
+
+        uvicorn.run("app.api:app", host=API_HOST, port=API_PORT, reload=args.reload)
         return
 
     from app.scheduler import run_monitor

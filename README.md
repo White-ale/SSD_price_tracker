@@ -94,9 +94,32 @@ pip install -r requirements.txt
 
 ```text
 DISCORD_WEBHOOK_URL=your_discord_webhook_url
+API_HOST=127.0.0.1
+API_PORT=8000
+CHECK_INTERVAL_SECONDS=3600
+REQUEST_DELAY_SECONDS=3
 ```
 
 Discord 알림을 사용하지 않을 경우 비워둬도 됩니다.
+
+각 값의 의미는 다음과 같습니다.
+
+```text
+DISCORD_WEBHOOK_URL
+= Discord 알림을 받을 웹훅 주소
+
+API_HOST
+= 웹 API 서버를 열 주소
+
+API_PORT
+= 웹 API 서버 포트
+
+CHECK_INTERVAL_SECONDS
+= --monitor 모드에서 가격을 다시 확인하기까지 기다리는 시간
+
+REQUEST_DELAY_SECONDS
+= 상품 하나를 확인한 뒤 다음 상품으로 넘어가기 전 대기 시간
+```
 
 ## 상품 설정
 
@@ -276,6 +299,86 @@ http://127.0.0.1:8000
 `127.0.0.1`은 내 컴퓨터를 의미하므로, 다른 사람은 이 주소로 접속할 수 없습니다.
 
 다른 사람도 접속할 수 있게 하려면 Render, Railway, Fly.io, AWS 같은 외부 서버에 배포해야 합니다.
+
+## 데스크탑 DB 하나로 운영하고 노트북에서 개발하기
+
+노트북과 데스크탑에서 각각 `main.py --monitor`를 실행하면 `price_tracker.db`가 따로 생성되어 가격 기록이 둘로 나뉩니다.
+
+가격 기록을 하나로 유지하려면 한 컴퓨터만 실제 수집 서버로 정합니다. 현재 추천 구조는 다음과 같습니다.
+
+```text
+데스크탑
+= 실제 가격 수집 담당
+= price_tracker.db 원본 보관
+= main.py --monitor 실행
+= main.py --api 실행
+
+노트북
+= 코드 개발 담당
+= 브라우저로 데스크탑 API 접속
+= 필요할 때만 로컬 개발용 DB로 테스트
+```
+
+데스크탑에서 노트북 접속을 허용하려면 데스크탑의 `.env`에 다음처럼 설정합니다.
+
+```text
+API_HOST=0.0.0.0
+API_PORT=8000
+```
+
+그 다음 데스크탑에서 API 서버를 실행합니다.
+
+```bash
+.\venv\Scripts\python.exe main.py --api
+```
+
+노트북에서는 데스크탑의 내부 IP 주소로 접속합니다.
+
+```text
+http://데스크탑_IP주소:8000/
+```
+
+예를 들어 데스크탑 IP가 `192.168.0.10`이면 다음 주소를 엽니다.
+
+```text
+http://192.168.0.10:8000/
+```
+
+노트북에서 개발할 때는 코드 수정과 테스트는 자유롭게 하되, 실제 가격 기록을 하나로 유지하고 싶다면 노트북에서 `main.py --monitor`를 계속 켜두지 않습니다.
+
+노트북에서 기능 테스트 때문에 `main.py --once`나 `main.py --api`를 실행하면 노트북에도 개발용 `price_tracker.db`가 생길 수 있습니다. 이 파일은 Git에 커밋하지 않고, 실제 기록 원본은 데스크탑 DB로 봅니다.
+
+## API 자동 실행
+
+API 서버 자동 실행에는 다음 파일을 사용할 수 있습니다.
+
+```text
+run_api.ps1
+scripts/register_api_task.ps1
+```
+
+`run_api.ps1`은 프로젝트 폴더로 이동한 뒤 `main.py --api`를 실행합니다.
+
+관리자 권한 PowerShell에서 다음 스크립트를 실행하면 작업 스케줄러에 API 자동 실행 작업을 등록할 수 있습니다.
+
+```powershell
+.\scripts\register_api_task.ps1
+```
+
+직접 작업 스케줄러에서 등록한다면 동작은 다음처럼 설정합니다. PowerShell을 거치지 않고 Python을 직접 실행하는 방식입니다.
+
+```text
+프로그램
+= C:\Users\godae\SSD_price_tracker\venv\Scripts\python.exe
+
+인수
+= main.py --api
+
+시작 위치
+= C:\Users\godae\SSD_price_tracker
+```
+
+트리거는 시간 예약보다 `로그온할 때`를 권장합니다.
 
 ## 자주 만난 오류
 
