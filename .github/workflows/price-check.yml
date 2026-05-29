@@ -2,7 +2,7 @@ name: Price check
 
 on:
   schedule:
-    - cron: "0 * * * *"
+    - cron: "17 * * * *"
   workflow_dispatch:
 
 permissions:

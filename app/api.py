@@ -45,7 +45,9 @@ def root():
         latest_price = format_price(item["latest_price"])
         target_price = format_price(item["target_price"])
         lowest_price = format_price(item["lowest_price"])
-        checked_at = item["status_last_checked_at"] or item["latest_checked_at"] or "-"
+        checked_at = format_timestamp(
+            item["status_last_checked_at"] or item["latest_checked_at"]
+        )
         target_status = "Reached" if item["is_target_reached"] else "Watching"
         target_class = "reached" if item["is_target_reached"] else "watching"
         failure_count = item["consecutive_failures"]
@@ -702,7 +704,9 @@ def build_status_metrics(latest_run, summaries):
         run_failures = "0"
     else:
         run_status = format_run_status(latest_run["status"])
-        run_time = latest_run["finished_at"] or latest_run["started_at"] or "-"
+        run_time = format_timestamp(
+            latest_run["finished_at"] or latest_run["started_at"]
+        )
         run_counts = f"{latest_run['success_count']} / {latest_run['checked_count']}"
         run_failures = str(latest_run["failure_count"])
 
@@ -753,6 +757,13 @@ def format_price(price):
         return "-"
 
     return f"{price:,} KRW"
+
+
+def format_timestamp(timestamp):
+    if not timestamp:
+        return "-"
+
+    return f"{timestamp} KST"
 
 
 def build_price_chart(product_id):

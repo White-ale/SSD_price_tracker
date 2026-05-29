@@ -1,5 +1,4 @@
 import time
-from datetime import datetime
 
 from app.config import (
     CHECK_INTERVAL_SECONDS,
@@ -18,6 +17,7 @@ from app.storage import (
     save_price_record,
     start_check_run,
     upsert_product,
+    current_timestamp,
 )
 
 
@@ -72,7 +72,7 @@ def run_once():
     failure_count = 0
     run_error = None
 
-    print(f"\n--- {datetime.now().strftime('%H:%M:%S')} price check started ---")
+    print(f"\n--- {current_timestamp()} KST price check started ---")
 
     try:
         products = load_products()

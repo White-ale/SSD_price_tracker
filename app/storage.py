@@ -1,6 +1,6 @@
 import sqlite3
 from contextlib import contextmanager
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 
 from app.config import (
     DATABASE_BACKEND,
@@ -9,9 +9,11 @@ from app.config import (
     TURSO_DATABASE_URL,
 )
 
+KST = timezone(timedelta(hours=9))
+
 
 def current_timestamp():
-    return datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    return datetime.now(KST).strftime("%Y-%m-%d %H:%M:%S")
 
 
 @contextmanager
