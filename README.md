@@ -1,52 +1,113 @@
 # SSD Price Tracker
 
-SSD 가격을 주기적으로 확인하고, 가격 이력을 SQLite에 저장한 뒤 웹에서 조회할 수 있는 로컬 가격 추적 프로젝트입니다.
+SSD 가격을 주기적으로 확인하고, 가격 이력과 실행 상태를 저장한 뒤 웹 대시보드에서 확인하는 가격 추적 프로젝트입니다.
 
-현재는 로컬 환경에서 실행하는 단계입니다.
+현재 권장 운영 구조는 다음과 같습니다.
+
+```text
+GitHub Actions
+-> 1시간마다 가격 체크 실행
+-> Turso 클라우드 DB에 가격 기록 저장
+-> 필요 시 Discord 알림 전송
+
+로컬 PC / 노트북
+-> FastAPI 웹 서버 실행
+-> 가격 현황, 실행 상태, 상품 관리 화면 확인
+```
+
+로컬 개발용 SQLite도 계속 지원합니다. 개발 중에는 `price_tracker.db`를 사용하고, 실제 자동 수집은 Turso DB에 쌓는 방식으로 운영할 수 있습니다.
 
 ## 주요 기능
 
 - `products.json`에 등록된 상품 가격 수집
-- SQLite DB에 상품 정보와 가격 기록 저장
-- 목표가 도달 시 Discord 알림 전송
-- FastAPI를 통한 가격 데이터 조회
-- 브라우저에서 가격 요약 화면 확인
+- 다나와 상품 페이지에서 가격 크롤링
+- SQLite 또는 Turso 클라우드 DB에 가격 기록 저장
+- 목표가 도달 또는 가격 변경 시 Discord 알림 전송
+- 가격 체크 실행 기록 저장
+- 상품별 마지막 성공/실패 상태 저장
+- 연속 실패 횟수 추적
+- 브라우저 대시보드 제공
+- 상품 추가, 수정, 삭제 관리 화면 제공
+- GitHub Actions를 통한 1시간 주기 자동 실행
 
-## 현재 실행 구조
+## 현재 완성된 범위
+
+현재 프로젝트는 단순 크롤링 스크립트 단계는 넘어서, 실제 운영에 필요한 기본 흐름을 갖춘 상태입니다.
+
+```text
+가격 수집
+-> 가격 이력 저장
+-> 실행 성공/실패 상태 저장
+-> 웹 대시보드 조회
+-> 웹에서 상품 관리
+-> GitHub Actions로 자동 실행
+-> Turso 클라우드 DB에 로그 누적
+```
+
+특히 이번 구조에서 중요한 개선점은 세 가지입니다.
+
+```text
+운영 안정성
+= 프로그램이 제대로 체크했는지, 실패했는지, 몇 번 연속 실패했는지 확인 가능
+
+상품 관리
+= products.json을 직접 열지 않아도 웹에서 상품 추가, 수정, 삭제 가능
+
+클라우드 자동 수집
+= PC가 꺼져 있어도 GitHub Actions가 1시간마다 실행되어 Turso DB에 기록 가능
+```
+
+## 현재 구조
 
 ```text
 products.json
-→ main.py --once / --monitor
-→ app/crawler.py
-→ app/storage.py
-→ price_tracker.db
-→ main.py --api
-→ FastAPI 웹 화면
+-> 추적할 상품 목록
+
+main.py --once
+-> 상품 가격을 한 번 확인
+-> DB에 가격 기록 저장
+-> 필요 시 Discord 알림 전송
+
+main.py --monitor
+-> 로컬에서 계속 가격 확인 반복
+
+main.py --api
+-> FastAPI 웹 화면 실행
+
+GitHub Actions
+-> 1시간마다 main.py --once 실행
+-> Turso DB에 기록
 ```
 
-역할을 간단히 나누면 다음과 같습니다.
+역할을 파일 기준으로 나누면 다음과 같습니다.
 
 ```text
 main.py
 = 실행 모드를 선택하는 진입점
 
+app/config.py
+= .env와 환경변수 설정 로드
+
 app/crawler.py
 = 다나와 상품 페이지에서 가격 가져오기
 
 app/storage.py
-= SQLite DB 저장 및 조회
+= SQLite 또는 Turso DB 저장 및 조회
 
 app/scheduler.py
-= 상품 목록을 읽고 가격 확인 흐름 실행
+= 상품 목록을 읽고 가격 체크 흐름 실행
+
+app/products_config.py
+= products.json 읽기, 저장, 검증, 상품 추가/수정/삭제
 
 app/notifier.py
 = Discord 알림 전송
 
 app/api.py
-= 웹 화면 및 API 제공
+= 대시보드, 상품 관리 화면, API 제공
 
 products.json
-= 사람이 직접 수정하는 상품 설정 파일
+= 추적할 상품 목록 원본
 ```
 
 ## 폴더 구조
@@ -57,15 +118,21 @@ SSD_price_tracker/
   products.json
   requirements.txt
   README.md
+  .env.example
+  .github/
+    workflows/
+      price-check.yml
   app/
     api.py
     config.py
     crawler.py
     notifier.py
+    products_config.py
     scheduler.py
     storage.py
   scripts/
     migrate_csv_to_sqlite.py
+    register_api_task.ps1
 ```
 
 ## 설치 방법
@@ -96,11 +163,13 @@ pip install -r requirements.txt
 DISCORD_WEBHOOK_URL=your_discord_webhook_url
 API_HOST=127.0.0.1
 API_PORT=8000
+DATABASE_BACKEND=sqlite
+TURSO_DATABASE_URL=
+TURSO_AUTH_TOKEN=
 CHECK_INTERVAL_SECONDS=3600
 REQUEST_DELAY_SECONDS=3
+FAILURE_ALERT_THRESHOLD=3
 ```
-
-Discord 알림을 사용하지 않을 경우 비워둬도 됩니다.
 
 각 값의 의미는 다음과 같습니다.
 
@@ -114,12 +183,40 @@ API_HOST
 API_PORT
 = 웹 API 서버 포트
 
+DATABASE_BACKEND
+= sqlite 또는 turso
+
+TURSO_DATABASE_URL
+= Turso DB URL
+
+TURSO_AUTH_TOKEN
+= Turso 인증 토큰
+
 CHECK_INTERVAL_SECONDS
-= --monitor 모드에서 가격을 다시 확인하기까지 기다리는 시간
+= --monitor 모드에서 다음 체크까지 기다리는 시간
 
 REQUEST_DELAY_SECONDS
 = 상품 하나를 확인한 뒤 다음 상품으로 넘어가기 전 대기 시간
+
+FAILURE_ALERT_THRESHOLD
+= 상품별 연속 실패 알림 기준 횟수
 ```
+
+로컬 개발만 할 경우에는 기본값처럼 SQLite를 사용하면 됩니다.
+
+```text
+DATABASE_BACKEND=sqlite
+```
+
+Turso 클라우드 DB를 사용할 경우에는 다음처럼 설정합니다.
+
+```text
+DATABASE_BACKEND=turso
+TURSO_DATABASE_URL=libsql://...
+TURSO_AUTH_TOKEN=...
+```
+
+토큰은 Git에 커밋하지 않습니다. `.env`는 `.gitignore`에 포함되어 있습니다.
 
 ## 상품 설정
 
@@ -148,6 +245,23 @@ target_price
 = 목표 가격
 ```
 
+웹 관리 화면에서도 상품을 추가, 수정, 삭제할 수 있습니다.
+
+```text
+http://127.0.0.1:8000/manage
+```
+
+현재는 `products.json`이 상품 목록의 원본입니다. `/manage`에서 상품을 바꾸면 로컬 `products.json`이 수정됩니다.
+
+GitHub Actions 자동 실행에 상품 변경을 반영하려면 `products.json` 변경사항을 커밋하고 GitHub에 push해야 합니다.
+
+```text
+/manage에서 상품 변경
+-> products.json 변경
+-> git commit / push
+-> GitHub Actions 자동 실행에 반영
+```
+
 ## 실행 방법
 
 ### 가격 한 번 수집
@@ -160,11 +274,12 @@ target_price
 
 ```text
 products.json 읽기
-→ 상품별 URL 접속
-→ 가격 크롤링
-→ SQLite DB 저장
-→ 필요 시 Discord 알림
-→ 종료
+-> 상품별 URL 접속
+-> 가격 크롤링
+-> DB 저장
+-> 실행 상태 저장
+-> 필요 시 Discord 알림
+-> 종료
 ```
 
 ### 가격 계속 감시
@@ -177,10 +292,12 @@ products.json 읽기
 
 ```text
 가격 수집
-→ 일정 시간 대기
-→ 다시 가격 수집
-→ 반복
+-> CHECK_INTERVAL_SECONDS 만큼 대기
+-> 다시 가격 수집
+-> 반복
 ```
+
+이 모드는 PC가 켜져 있을 때만 동작합니다. PC가 꺼져 있어도 로그가 쌓이게 하려면 GitHub Actions + Turso 구성을 사용합니다.
 
 ### 웹 API 서버 실행
 
@@ -188,10 +305,16 @@ products.json 읽기
 .\venv\Scripts\python.exe main.py --api
 ```
 
-웹 화면:
+대시보드:
 
 ```text
 http://127.0.0.1:8000/
+```
+
+상품 관리:
+
+```text
+http://127.0.0.1:8000/manage
 ```
 
 API 문서:
@@ -200,32 +323,104 @@ API 문서:
 http://127.0.0.1:8000/docs
 ```
 
-## FastAPI 화면 설명
+## 웹 화면
 
 ### `/`
 
-사람이 보기 쉬운 가격 요약 화면입니다.
+가격 현황을 확인하는 메인 대시보드입니다.
 
 표시 항목:
 
 ```text
+Last Run
+Success
+Failures
+Products
 Product
 Latest
 Target
 Lowest
+Trend
 Checked At
-Status
+Failures
+Health
+Target
 ```
+
+`Health`는 상품별 크롤링 상태를 의미합니다.
+
+```text
+Pending
+= 아직 상태 체크 기록 없음
+
+Healthy
+= 최근 체크 성공
+
+Failing
+= 최근 체크 실패 또는 연속 실패 있음
+```
+
+### `/manage`
+
+상품 관리 화면입니다.
+
+가능한 작업:
+
+```text
+상품 추가
+상품명 수정
+URL 수정
+목표가 수정
+상품 삭제
+```
+
+삭제 버튼을 누르면 `products.json`에서는 상품이 제거됩니다.
+
+DB에서는 가격 이력을 지우지 않고 `is_active = 0`으로 비활성화합니다.
+
+```text
+products.json
+-> 상품 제거
+
+products 테이블
+-> is_active = 0
+
+price_records 테이블
+-> 기존 가격 이력 유지
+```
+
+즉, 화면에서는 삭제된 것처럼 보이지만 과거 가격 기록은 보존됩니다.
+
+## 운영 상태 기록
+
+가격 추적기는 조용히 실패하면 의미가 없어지기 때문에, 가격 기록과 별도로 실행 상태를 저장합니다.
+
+저장되는 상태:
+
+```text
+전체 실행 기록
+= 언제 시작했고 끝났는지
+= 몇 개 상품을 확인했는지
+= 성공/실패 개수
+= 전체 실행 상태
+
+상품별 상태
+= 마지막 체크 시간
+= 마지막 성공 시간
+= 마지막 실패 시간
+= 마지막 에러 메시지
+= 연속 실패 횟수
+```
+
+대시보드에서는 이 정보를 바탕으로 `Healthy`, `Failing`, `Pending` 상태를 보여줍니다.
+
+연속 실패 횟수가 `FAILURE_ALERT_THRESHOLD`에 도달하면 Discord 경고를 보낼 수 있습니다.
 
 ### `/docs`
 
 FastAPI가 자동으로 만들어주는 API 테스트 문서입니다.
 
-`/docs`는 실제 사용자 화면이 아니라, API가 어떤 주소를 제공하는지 확인하고 직접 실행해볼 수 있는 개발자용 화면입니다.
-
-### `/summary`
-
-상품별 최신가, 최저가, 최고가, 목표가 도달 여부를 JSON으로 반환합니다.
+실제 사용자 화면이 아니라, API 주소를 확인하고 직접 실행해볼 수 있는 개발자용 화면입니다.
 
 ## 주요 API
 
@@ -233,100 +428,190 @@ FastAPI가 자동으로 만들어주는 API 테스트 문서입니다.
 GET /
 = 가격 요약 HTML 화면
 
+GET /manage
+= 상품 관리 HTML 화면
+
+GET /health
+= API 상태 확인
+
+GET /status
+= 전체 실행 상태와 상품별 실패 상태 조회
+
 GET /products
-= 전체 상품 목록 조회
+= 활성 상품 목록 조회
 
 GET /products/{product_id}
-= 특정 상품 조회
+= 특정 활성 상품 조회
 
 GET /products/{product_id}/prices
 = 특정 상품의 가격 기록 조회
 
 GET /summary
 = 상품별 가격 요약 조회
+
+POST /check-now
+= 전체 상품 즉시 가격 체크
 ```
 
 ## 데이터 저장 방식
 
-가격 데이터는 SQLite DB에 저장됩니다.
+DB는 두 가지 모드를 지원합니다.
 
 ```text
-price_tracker.db
+sqlite
+= 로컬 개발용 price_tracker.db 사용
+
+turso
+= Turso 클라우드 DB 사용
 ```
 
-테이블 구조:
+주요 테이블:
 
 ```text
 products
+= 상품 정보
+
 price_records
+= 상품별 가격 기록
+
+check_runs
+= 전체 가격 체크 실행 기록
+
+product_check_status
+= 상품별 마지막 성공/실패 상태
 ```
 
-`products`는 상품 정보를 저장하고, `price_records`는 상품별 가격 기록을 저장합니다.
+관계는 다음과 같습니다.
 
 ```text
 products 1개
-→ price_records 여러 개
+-> price_records 여러 개
 ```
 
 `products.json`과 DB의 역할은 다릅니다.
 
 ```text
 products.json
-= 사람이 직접 수정하는 상품 설정 원본
+= 추적할 상품 목록 원본
 
 products 테이블
-= 가격 기록과 연결하기 위해 DB 내부에서 사용하는 상품 정보
+= 가격 기록과 상태 기록을 연결하기 위한 DB 내부 상품 정보
 ```
 
-## CSV 마이그레이션
+## GitHub Actions 자동 실행
 
-기존 CSV 데이터를 SQLite로 옮기려면 다음 명령어를 실행합니다.
-
-```bash
-.\venv\Scripts\python.exe scripts\migrate_csv_to_sqlite.py
-```
-
-마이그레이션은 중복 저장을 방지하도록 구성되어 있습니다.
-
-## 로컬 실행 상태
-
-현재 프로젝트는 로컬 실행용입니다.
+자동 가격 체크 workflow는 다음 파일에 있습니다.
 
 ```text
-http://127.0.0.1:8000
+.github/workflows/price-check.yml
 ```
 
-`127.0.0.1`은 내 컴퓨터를 의미하므로, 다른 사람은 이 주소로 접속할 수 없습니다.
+실행 조건:
 
-다른 사람도 접속할 수 있게 하려면 Render, Railway, Fly.io, AWS 같은 외부 서버에 배포해야 합니다.
+```yaml
+on:
+  schedule:
+    - cron: "0 * * * *"
+  workflow_dispatch:
+```
 
-## 데스크탑 DB 하나로 운영하고 노트북에서 개발하기
+의미:
 
-노트북과 데스크탑에서 각각 `main.py --monitor`를 실행하면 `price_tracker.db`가 따로 생성되어 가격 기록이 둘로 나뉩니다.
+```text
+매시간 0분에 자동 실행
+수동 실행 가능
+```
 
-가격 기록을 하나로 유지하려면 한 컴퓨터만 실제 수집 서버로 정합니다. 현재 추천 구조는 다음과 같습니다.
+실행 명령:
+
+```bash
+python main.py --once
+```
+
+GitHub Actions는 새 runner에서 실행되므로, 매번 checkout, Python 설정, 패키지 설치 후 가격 체크를 실행합니다. 그래서 로컬 실행보다 느릴 수 있습니다.
+
+### GitHub Secrets
+
+GitHub Actions에서 Turso DB를 사용하려면 repository secret을 등록해야 합니다.
+
+GitHub 저장소에서 다음 경로로 이동합니다.
+
+```text
+Settings
+-> Secrets and variables
+-> Actions
+-> New repository secret
+```
+
+필수 Secret:
+
+```text
+Name:
+TURSO_DATABASE_URL
+
+Secret:
+libsql://...
+```
+
+```text
+Name:
+TURSO_AUTH_TOKEN
+
+Secret:
+eyJ...
+```
+
+선택 Secret:
+
+```text
+Name:
+DISCORD_WEBHOOK_URL
+
+Secret:
+https://discord.com/api/webhooks/...
+```
+
+Secret 값에는 `.env`처럼 `KEY=value` 전체를 넣지 않습니다.
+
+잘못된 예:
+
+```text
+TURSO_AUTH_TOKEN=eyJ...
+```
+
+올바른 예:
+
+```text
+eyJ...
+```
+
+토큰은 한 줄로 넣고, 따옴표나 줄바꿈을 포함하지 않습니다.
+
+## 데스크탑 서버 방식
+
+현재는 GitHub Actions + Turso가 권장 운영 방식입니다.
+
+다만 로컬 네트워크에서 데스크탑을 메인 서버로 쓰는 방식도 가능합니다.
 
 ```text
 데스크탑
-= 실제 가격 수집 담당
-= price_tracker.db 원본 보관
-= main.py --monitor 실행
-= main.py --api 실행
+= 가격 수집
+= DB 보관
+= API 서버 실행
 
 노트북
-= 코드 개발 담당
+= 코드 개발
 = 브라우저로 데스크탑 API 접속
-= 필요할 때만 로컬 개발용 DB로 테스트
 ```
 
-데스크탑에서 노트북 접속을 허용하려면 데스크탑의 `.env`에 다음처럼 설정합니다.
+데스크탑에서 노트북 접속을 허용하려면 데스크탑 `.env`를 다음처럼 설정합니다.
 
 ```text
 API_HOST=0.0.0.0
 API_PORT=8000
 ```
 
-그 다음 데스크탑에서 API 서버를 실행합니다.
+데스크탑에서 API 서버를 실행합니다.
 
 ```bash
 .\venv\Scripts\python.exe main.py --api
@@ -338,17 +623,20 @@ API_PORT=8000
 http://데스크탑_IP주소:8000/
 ```
 
-예를 들어 데스크탑 IP를 확인했다면 다음 형식으로 주소를 엽니다.
+주의할 점:
 
 ```text
-http://데스크탑_IP주소:8000/
+같은 인터넷을 사용해도 같은 내부망이 아닐 수 있습니다.
+데스크탑 이더넷과 노트북 Wi-Fi가 서로 다른 IP 대역이면 접속이 안 될 수 있습니다.
 ```
 
-노트북에서 개발할 때는 코드 수정과 테스트는 자유롭게 하되, 실제 가격 기록을 하나로 유지하고 싶다면 노트북에서 `main.py --monitor`를 계속 켜두지 않습니다.
+이 경우 데스크탑 Wi-Fi를 켜고 노트북과 같은 Wi-Fi에 연결한 뒤, 데스크탑 Wi-Fi IPv4 주소로 접속합니다.
 
-노트북에서 기능 테스트 때문에 `main.py --once`나 `main.py --api`를 실행하면 노트북에도 개발용 `price_tracker.db`가 생길 수 있습니다. 이 파일은 Git에 커밋하지 않고, 실제 기록 원본은 데스크탑 DB로 봅니다.
+```text
+http://데스크탑_WiFi_IP:8000/
+```
 
-## API 자동 실행
+## Windows 작업 스케줄러
 
 API 서버 자동 실행에는 다음 파일을 사용할 수 있습니다.
 
@@ -357,15 +645,13 @@ run_api.ps1
 scripts/register_api_task.ps1
 ```
 
-`run_api.ps1`은 프로젝트 폴더로 이동한 뒤 `main.py --api`를 실행합니다.
-
 관리자 권한 PowerShell에서 다음 스크립트를 실행하면 작업 스케줄러에 API 자동 실행 작업을 등록할 수 있습니다.
 
 ```powershell
 .\scripts\register_api_task.ps1
 ```
 
-직접 작업 스케줄러에서 등록한다면 동작은 다음처럼 설정합니다. PowerShell을 거치지 않고 Python을 직접 실행하는 방식입니다.
+직접 작업 스케줄러에서 등록한다면 동작은 다음처럼 설정합니다.
 
 ```text
 프로그램
@@ -378,38 +664,58 @@ scripts/register_api_task.ps1
 = C:\Users\godae\SSD_price_tracker
 ```
 
-트리거는 시간 예약보다 `로그온할 때`를 권장합니다.
+`--once`와 `--api`는 스케줄러 설정 방식이 다릅니다.
+
+```text
+main.py --once
+= 실행 후 종료
+= 시간 반복 실행 가능
+
+main.py --api
+= 계속 실행되는 서버
+= 로그온 시 1회 실행 권장
+```
+
+## CSV 마이그레이션
+
+기존 CSV 데이터를 SQLite로 옮기려면 다음 명령어를 실행합니다.
+
+```bash
+.\venv\Scripts\python.exe scripts\migrate_csv_to_sqlite.py
+```
+
+마이그레이션은 중복 저장을 방지하도록 구성되어 있습니다.
 
 ## 자주 만난 오류
 
-### 8000번 포트 중복 오류
+### 가격 체크가 실행됐는지 알 수 없는 경우
+
+대시보드 상단의 실행 상태를 먼저 확인합니다.
 
 ```text
-[Errno 10048]
+Last Run
+Success
+Failures
+Products
 ```
 
-이미 API 서버가 켜져 있을 때 발생합니다.
-
-해결:
+상품별 상태는 `Health`와 `Failures` 컬럼에서 확인합니다.
 
 ```text
-기존 서버 터미널에서 Ctrl + C
+Healthy
+= 최근 체크 성공
+
+Failing
+= 최근 체크 실패 또는 연속 실패 있음
+
+Pending
+= 아직 체크 기록 없음
 ```
 
-그 다음 다시 실행합니다.
-
-```bash
-.\venv\Scripts\python.exe main.py --api
-```
-
-### `/docs`에 데이터가 바로 안 보이는 경우
-
-`/docs`는 사용자 화면이 아니라 API 테스트 화면입니다.
-
-가격표를 보려면 다음 주소로 접속합니다.
+JSON으로 확인하려면 다음 API를 사용합니다.
 
 ```text
-http://127.0.0.1:8000/
+GET /status
 ```
 
 ### `main.py --api`를 실행했는데 터미널이 멈춘 것처럼 보이는 경우
@@ -420,28 +726,60 @@ API 서버는 계속 켜져 있어야 브라우저에서 접속할 수 있습니
 
 서버를 종료하려면 터미널에서 `Ctrl + C`를 누릅니다.
 
+### `/docs`에 가격표가 바로 안 보이는 경우
+
+`/docs`는 사용자 화면이 아니라 API 테스트 화면입니다.
+
+가격표를 보려면 다음 주소로 접속합니다.
+
+```text
+http://127.0.0.1:8000/
+```
+
+상품 관리 화면은 다음 주소입니다.
+
+```text
+http://127.0.0.1:8000/manage
+```
+
+### 8000번 포트 중복 오류
+
+```text
+[Errno 10048]
+```
+
+이미 API 서버가 켜져 있을 때 발생합니다.
+
+확인:
+
+```powershell
+Get-NetTCPConnection -LocalPort 8000 -State Listen
+```
+
+남아 있는 Python 프로세스 확인:
+
+```powershell
+Get-Process python,python3,uvicorn -ErrorAction SilentlyContinue
+```
+
+필요하면 해당 PID를 종료합니다.
+
+```powershell
+Stop-Process -Id <PID> -Force
+```
+
 ### 노트북에서 데스크탑 API에 접속할 수 없는 경우
 
-데스크탑 브라우저에서는 API가 열리는데 노트북에서 접속할 수 없다면 먼저 네트워크 대역을 확인합니다.
+데스크탑 브라우저에서는 API가 열리는데 노트북에서 접속되지 않는 경우가 있습니다.
 
-데스크탑에서 API 서버가 외부 접속을 받을 수 있게 열려 있는지 확인합니다.
+먼저 데스크탑 `.env`에 외부 접속 허용 설정이 되어 있어야 합니다.
 
 ```text
 API_HOST=0.0.0.0
 API_PORT=8000
 ```
 
-이 값은 `.env.example`이 아니라 실제 `.env` 파일에 있어야 합니다.
-
-```text
-.env
-= 실제 실행 때 읽는 개인 설정 파일
-
-.env.example
-= 설정 예시 파일
-```
-
-API 서버를 다시 시작한 뒤 데스크탑에서 다음처럼 떠 있는지 확인합니다.
+API 서버를 다시 시작한 뒤 데스크탑에서 8000번 포트가 열려 있는지 확인합니다.
 
 ```powershell
 netstat -ano | findstr :8000
@@ -453,58 +791,176 @@ netstat -ano | findstr :8000
 0.0.0.0:8000 LISTENING
 ```
 
-그 다음 데스크탑과 노트북의 IP 대역을 확인합니다.
+그 다음 데스크탑과 노트북이 같은 내부망인지 확인합니다.
 
 ```powershell
 ipconfig
 ```
 
-예를 들어 데스크탑은 이더넷으로 모뎀에 연결되어 있고, 노트북은 공유기 Wi-Fi에 연결되어 있으면 서로 다른 내부망일 수 있습니다.
+예를 들어 데스크탑은 모뎀 쪽 이더넷에 연결되어 있고, 노트북은 공유기 Wi-Fi에 연결되어 있으면 서로 다른 내부망일 수 있습니다.
 
 ```text
-데스크탑 이더넷
-= 모뎀 쪽 내부망 IP
+데스크탑
+= 192.168.55.xxx
 
-노트북 Wi-Fi
-= 공유기 Wi-Fi 쪽 내부망 IP
+노트북
+= 192.168.45.xxx
 ```
 
-이 상태에서 노트북이 데스크탑으로 `ping`을 보내도 실패할 수 있습니다.
-
-```powershell
-ping 데스크탑_이더넷_IP
-```
+이 경우 같은 인터넷을 쓰는 것처럼 보여도 노트북에서 데스크탑 API에 접속하거나 `ping`을 보내는 것이 실패할 수 있습니다.
 
 해결 방법은 데스크탑 Wi-Fi를 켜고 노트북과 같은 Wi-Fi에 연결한 뒤, 데스크탑의 Wi-Fi IPv4 주소로 접속하는 것입니다.
-
-```text
-데스크탑 Wi-Fi
-= 노트북과 같은 Wi-Fi 대역의 IP
-
-노트북 Wi-Fi
-= 데스크탑 Wi-Fi와 같은 대역의 IP
-```
-
-노트북에서는 데스크탑의 Wi-Fi IP로 접속합니다.
 
 ```text
 http://데스크탑_WiFi_IP:8000/
 ```
 
-노트북의 `.env`에는 별도 설정을 추가할 필요가 없습니다. 노트북에서 브라우저로 데스크탑 API를 보는 경우에는 주소창에 데스크탑 IP만 입력하면 됩니다.
-
 같은 대역이고 `ping`도 되는데 접속이 안 되면 Windows 방화벽에서 TCP 8000번 포트가 막혔을 가능성이 있습니다.
+
+### `/manage`에서 상품을 바꿨는데 GitHub Actions에 반영되지 않는 경우
+
+현재 상품 목록의 원본은 `products.json`입니다.
+
+로컬 `/manage`에서 상품을 추가, 수정, 삭제하면 로컬의 `products.json`만 바뀝니다.
+
+GitHub Actions는 GitHub에 올라간 `products.json`을 읽기 때문에, 변경사항을 자동 실행에 반영하려면 커밋하고 push해야 합니다.
+
+```text
+/manage에서 상품 변경
+-> products.json 변경
+-> git commit
+-> git push
+-> GitHub Actions에 반영
+```
+
+### GitHub Actions에서 Turso 값이 비어 있는 경우
+
+에러 예시:
+
+```text
+RuntimeError: Turso database requires TURSO_DATABASE_URL and TURSO_AUTH_TOKEN.
+```
+
+원인:
+
+```text
+GitHub Secrets에 TURSO_DATABASE_URL 또는 TURSO_AUTH_TOKEN이 등록되지 않았거나 이름이 다름
+```
+
+해결:
+
+```text
+Settings
+-> Secrets and variables
+-> Actions
+```
+
+에서 정확한 이름으로 Secret을 등록합니다.
+
+GitHub Secret은 `.env`처럼 전체 줄을 넣는 방식이 아닙니다.
+
+잘못된 예:
+
+```text
+TURSO_DATABASE_URL=libsql://...
+```
+
+올바른 예:
+
+```text
+Name:
+TURSO_DATABASE_URL
+
+Secret:
+libsql://...
+```
+
+### Hrana InvalidHeaderValue 오류
+
+에러 예시:
+
+```text
+ValueError: Hrana: http error: InvalidHeaderValue
+```
+
+원인:
+
+```text
+TURSO_AUTH_TOKEN 값에 접두어, 따옴표, 줄바꿈, 공백 등이 포함됨
+```
+
+잘못된 예:
+
+```text
+TURSO_AUTH_TOKEN=eyJ...
+```
+
+올바른 예:
+
+```text
+eyJ...
+```
+
+값에는 따옴표를 넣지 않고, 한 줄로 저장합니다.
 
 ## Git 관리
 
 `price_tracker.db`는 실행 결과로 생성되는 로컬 데이터이므로 Git에 커밋하지 않습니다.
 
-DB 구조를 만드는 코드는 `app/storage.py`에 포함되어 있으므로, 다른 환경에서도 프로그램을 실행하면 같은 테이블 구조를 만들 수 있습니다.
+커밋해야 하는 것:
 
-## 다음 목표
+```text
+코드 변경
+products.json 변경
+README.md 변경
+workflow 변경
+```
 
-- README를 계속 초보자용으로 개선
-- 웹 화면 디자인 개선
-- 상품 추가/수정/삭제 API 검토
-- 가격 변화 그래프 추가 검토
-- 배포 방식 검토
+커밋하지 않는 것:
+
+```text
+.env
+price_tracker.db
+venv/
+```
+
+GitHub Actions가 보는 상품 목록은 GitHub에 올라간 `products.json`입니다.
+
+따라서 `/manage`에서 상품을 바꾼 뒤 자동 실행에 반영하려면 `products.json`을 커밋하고 push해야 합니다.
+
+## 현재 한계와 다음 목표
+
+현재 한계:
+
+```text
+상품 목록 원본은 아직 products.json
+/manage에서 바꾼 상품은 push해야 GitHub Actions에 반영
+상품별 상세 페이지는 아직 없음
+큰 가격 그래프는 아직 없음
+상품별 개별 즉시 체크는 아직 없음
+```
+
+다음 목표:
+
+```text
+상품별 상세 페이지 추가
+가격 이력 큰 그래프 추가
+상품별 즉시 체크 추가
+알림 중복 방지 및 정책 개선
+상품 목록을 DB 기준으로 전환 검토
+```
+
+## 운영 흐름 요약
+
+현재 가장 안정적인 운영 흐름은 다음과 같습니다.
+
+```text
+1. products.json에 추적 상품 등록
+2. GitHub에 push
+3. GitHub Actions가 1시간마다 가격 체크
+4. Turso DB에 가격 기록 저장
+5. 로컬에서 main.py --api 실행
+6. 브라우저에서 대시보드와 상품 관리 화면 확인
+```
+
+이 구조를 통해 PC가 꺼져 있어도 가격 로그가 계속 쌓일 수 있습니다.
