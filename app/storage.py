@@ -2,7 +2,12 @@ import sqlite3
 from contextlib import contextmanager
 from datetime import datetime
 
-from app.config import DATABASE_FILE
+from app.config import (
+    DATABASE_BACKEND,
+    DATABASE_FILE,
+    TURSO_AUTH_TOKEN,
+    TURSO_DATABASE_URL,
+)
 
 
 def current_timestamp():
@@ -11,12 +16,38 @@ def current_timestamp():
 
 @contextmanager
 def get_connection():
-    connection = sqlite3.connect(DATABASE_FILE, timeout=30)
+    connection = create_connection()
 
     try:
         yield connection
     finally:
         connection.close()
+
+
+def create_connection():
+    if DATABASE_BACKEND == "sqlite":
+        return sqlite3.connect(DATABASE_FILE, timeout=30)
+
+    if DATABASE_BACKEND == "turso":
+        if not TURSO_DATABASE_URL or not TURSO_AUTH_TOKEN:
+            raise RuntimeError(
+                "Turso database requires TURSO_DATABASE_URL and TURSO_AUTH_TOKEN."
+            )
+
+        try:
+            import libsql
+        except ImportError as error:
+            raise RuntimeError(
+                "Turso database requires the libsql package. "
+                "Run pip install -r requirements.txt."
+            ) from error
+
+        return libsql.connect(
+            database=TURSO_DATABASE_URL,
+            auth_token=TURSO_AUTH_TOKEN,
+        )
+
+    raise RuntimeError(f"Unsupported DATABASE_BACKEND: {DATABASE_BACKEND}")
 
 
 def rows_to_dicts(cursor, rows):

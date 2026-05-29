@@ -34,6 +34,12 @@ load_env_file()
 
 PRODUCTS_FILE = os.path.join(BASE_DIR, "products.json")
 DATABASE_FILE = os.path.join(BASE_DIR, "price_tracker.db")
+DATABASE_BACKEND = os.getenv(
+    "DATABASE_BACKEND",
+    "turso" if os.getenv("TURSO_DATABASE_URL") else "sqlite",
+).strip().lower()
+TURSO_DATABASE_URL = os.getenv("TURSO_DATABASE_URL", "")
+TURSO_AUTH_TOKEN = os.getenv("TURSO_AUTH_TOKEN", "")
 CHECK_INTERVAL_SECONDS = get_int_env("CHECK_INTERVAL_SECONDS", 60 * 60)
 REQUEST_DELAY_SECONDS = get_int_env("REQUEST_DELAY_SECONDS", 3)
 FAILURE_ALERT_THRESHOLD = get_int_env("FAILURE_ALERT_THRESHOLD", 3)

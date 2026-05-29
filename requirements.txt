@@ -3,6 +3,7 @@ certifi==2026.4.22
 charset-normalizer==3.4.7
 fastapi==0.116.1
 idna==3.13
+libsql==0.1.11
 pydantic==2.11.7
 requests==2.33.1
 starlette==0.47.2
