@@ -4,7 +4,6 @@ from app.config import (
     CHECK_INTERVAL_SECONDS,
     FAILURE_ALERT_THRESHOLD,
     MIN_CHECK_INTERVAL_MINUTES,
-    PRICE_CHANGE_ALERT_THRESHOLD_KRW,
     REQUEST_DELAY_SECONDS,
 )
 from app.crawler import get_price
@@ -67,17 +66,15 @@ def check_product(item):
 
 
 def format_krw(price):
-    return f"{price:,} KRW"
+    return f"{price} KRW"
 
 
 def build_price_notification_message(name, current_price, last_price, target_price):
     if last_price == 0:
         if current_price <= target_price:
             return (
-                f"[Target reached] {name}\n"
-                f"Current price: {format_krw(current_price)} / "
-                f"Target: {format_krw(target_price)}\n"
-                "First tracked price is already at or below target."
+                f"[Target reached] {name} {format_krw(current_price)} "
+                f"(Target: {format_krw(target_price)})"
             )
 
         print(f"[{name}] first price saved ({format_krw(current_price)}).")
@@ -90,27 +87,22 @@ def build_price_notification_message(name, current_price, last_price, target_pri
     target_crossed = last_price > target_price and current_price <= target_price
     if target_crossed:
         return (
-            f"[Target reached] {name}\n"
-            f"Previous price: {format_krw(last_price)}\n"
-            f"Current price: {format_krw(current_price)} / "
-            f"Target: {format_krw(target_price)}"
+            f"[Target reached] {name} {format_krw(current_price)} "
+            f"(Target: {format_krw(target_price)})"
         )
 
     price_delta = current_price - last_price
-    if abs(price_delta) < PRICE_CHANGE_ALERT_THRESHOLD_KRW:
+
+    if price_delta > 0:
         print(
-            f"[{name}] small change ignored "
+            f"[{name}] price increased without notification "
             f"({format_krw(last_price)} -> {format_krw(current_price)})."
         )
         return None
 
-    direction = "dropped" if price_delta < 0 else "increased"
     return (
-        f"[Price {direction}] {name}\n"
-        f"Previous price: {format_krw(last_price)}\n"
-        f"Current price: {format_krw(current_price)}\n"
-        f"Change: {format_krw(abs(price_delta))}\n"
-        f"Target: {format_krw(target_price)}"
+        f"[Price dropped] {name}: {last_price} -> "
+        f"{format_krw(current_price)} (-{format_krw(abs(price_delta))})"
     )
 
 

@@ -276,7 +276,6 @@ CHECK_INTERVAL_SECONDS=3600
 REQUEST_DELAY_SECONDS=3
 MIN_CHECK_INTERVAL_MINUTES=0
 FAILURE_ALERT_THRESHOLD=3
-PRICE_CHANGE_ALERT_THRESHOLD_KRW=10000
 ```
 
 각 값의 의미는 다음과 같습니다.
@@ -312,9 +311,6 @@ MIN_CHECK_INTERVAL_MINUTES
 
 FAILURE_ALERT_THRESHOLD
 = 상품별 연속 실패 알림 기준 횟수
-
-PRICE_CHANGE_ALERT_THRESHOLD_KRW
-= 목표가 도달이 아닌 일반 가격 변동 알림을 보낼 최소 변동 금액
 ```
 
 로컬 개발만 할 경우에는 기본값처럼 SQLite를 사용하면 됩니다.
@@ -544,8 +540,11 @@ price_records 테이블
 목표가 도달
 = 이전 가격이 목표가보다 높았고 현재 가격이 목표가 이하이면 알림
 
-일반 가격 변동
-= PRICE_CHANGE_ALERT_THRESHOLD_KRW 이상 변동했을 때만 알림
+가격 상승
+= DB에는 저장하지만 Discord 알림은 보내지 않음
+
+가격 하락
+= 가격이 내려가면 짧은 Discord 알림을 보냄
 ```
 
 ### `/docs`
