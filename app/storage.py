@@ -1,11 +1,22 @@
 import sqlite3
+from contextlib import contextmanager
 from datetime import datetime
 
 from app.config import DATABASE_FILE
 
 
+def current_timestamp():
+    return datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+
+@contextmanager
 def get_connection():
-    return sqlite3.connect(DATABASE_FILE)
+    connection = sqlite3.connect(DATABASE_FILE, timeout=30)
+
+    try:
+        yield connection
+    finally:
+        connection.close()
 
 
 def rows_to_dicts(cursor, rows):
@@ -48,12 +59,42 @@ def initialize_database():
             """
         )
 
+        cursor.execute(
+            """
+            CREATE TABLE IF NOT EXISTS check_runs (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                started_at TEXT NOT NULL,
+                finished_at TEXT,
+                status TEXT NOT NULL,
+                checked_count INTEGER NOT NULL DEFAULT 0,
+                success_count INTEGER NOT NULL DEFAULT 0,
+                failure_count INTEGER NOT NULL DEFAULT 0,
+                error_message TEXT
+            )
+            """
+        )
+
+        cursor.execute(
+            """
+            CREATE TABLE IF NOT EXISTS product_check_status (
+                product_id INTEGER PRIMARY KEY,
+                last_checked_at TEXT,
+                last_success_at TEXT,
+                last_failure_at TEXT,
+                last_error TEXT,
+                consecutive_failures INTEGER NOT NULL DEFAULT 0,
+                updated_at TEXT NOT NULL,
+                FOREIGN KEY (product_id) REFERENCES products (id)
+            )
+            """
+        )
+
         connection.commit()
 
 
 def upsert_product(name, url, target_price):
     # Keep products.json and the products table in sync by product name.
-    now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    now = current_timestamp()
 
     with get_connection() as connection:
         cursor = connection.cursor()
@@ -74,7 +115,7 @@ def upsert_product(name, url, target_price):
 
 
 def save_price_record(product_id, name, price):
-    checked_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    checked_at = current_timestamp()
     saved = save_price_record_at(product_id, price, checked_at)
 
     if saved:
@@ -192,7 +233,12 @@ def get_price_summary():
                 latest.checked_at AS latest_checked_at,
                 MIN(price_records.price) AS lowest_price,
                 MAX(price_records.price) AS highest_price,
-                COUNT(price_records.id) AS record_count
+                COUNT(price_records.id) AS record_count,
+                product_check_status.last_checked_at AS status_last_checked_at,
+                product_check_status.last_success_at AS last_success_at,
+                product_check_status.last_failure_at AS last_failure_at,
+                product_check_status.last_error AS last_error,
+                product_check_status.consecutive_failures AS consecutive_failures
             FROM products
             LEFT JOIN price_records
                 ON price_records.product_id = products.id
@@ -204,6 +250,8 @@ def get_price_summary():
                     ORDER BY checked_at DESC, id DESC
                     LIMIT 1
                 )
+            LEFT JOIN product_check_status
+                ON product_check_status.product_id = products.id
             GROUP BY products.id
             ORDER BY products.id
             """
@@ -216,5 +264,170 @@ def get_price_summary():
         summary["is_target_reached"] = (
             latest_price is not None and latest_price <= target_price
         )
+        summary["consecutive_failures"] = summary["consecutive_failures"] or 0
 
     return summaries
+
+
+def start_check_run():
+    now = current_timestamp()
+
+    with get_connection() as connection:
+        cursor = connection.cursor()
+        cursor.execute(
+            """
+            INSERT INTO check_runs (started_at, status)
+            VALUES (?, ?)
+            """,
+            (now, "running"),
+        )
+        connection.commit()
+        return cursor.lastrowid
+
+
+def finish_check_run(
+    run_id,
+    checked_count,
+    success_count,
+    failure_count,
+    error_message=None,
+):
+    finished_at = current_timestamp()
+
+    if failure_count == 0:
+        status = "success"
+    elif success_count == 0:
+        status = "failed"
+    else:
+        status = "partial_failure"
+
+    with get_connection() as connection:
+        cursor = connection.cursor()
+        cursor.execute(
+            """
+            UPDATE check_runs
+            SET
+                finished_at = ?,
+                status = ?,
+                checked_count = ?,
+                success_count = ?,
+                failure_count = ?,
+                error_message = ?
+            WHERE id = ?
+            """,
+            (
+                finished_at,
+                status,
+                checked_count,
+                success_count,
+                failure_count,
+                error_message,
+                run_id,
+            ),
+        )
+        connection.commit()
+
+
+def record_product_check_success(product_id):
+    now = current_timestamp()
+
+    with get_connection() as connection:
+        cursor = connection.cursor()
+        cursor.execute(
+            """
+            INSERT INTO product_check_status (
+                product_id,
+                last_checked_at,
+                last_success_at,
+                consecutive_failures,
+                updated_at
+            )
+            VALUES (?, ?, ?, 0, ?)
+            ON CONFLICT(product_id) DO UPDATE SET
+                last_checked_at = excluded.last_checked_at,
+                last_success_at = excluded.last_success_at,
+                last_error = NULL,
+                consecutive_failures = 0,
+                updated_at = excluded.updated_at
+            """,
+            (product_id, now, now, now),
+        )
+        connection.commit()
+
+
+def record_product_check_failure(product_id, error_message):
+    now = current_timestamp()
+    error_message = str(error_message)[:500]
+
+    with get_connection() as connection:
+        cursor = connection.cursor()
+        cursor.execute(
+            """
+            INSERT INTO product_check_status (
+                product_id,
+                last_checked_at,
+                last_failure_at,
+                last_error,
+                consecutive_failures,
+                updated_at
+            )
+            VALUES (?, ?, ?, ?, 1, ?)
+            ON CONFLICT(product_id) DO UPDATE SET
+                last_checked_at = excluded.last_checked_at,
+                last_failure_at = excluded.last_failure_at,
+                last_error = excluded.last_error,
+                consecutive_failures = product_check_status.consecutive_failures + 1,
+                updated_at = excluded.updated_at
+            """,
+            (product_id, now, now, error_message, now),
+        )
+        cursor.execute(
+            """
+            SELECT consecutive_failures
+            FROM product_check_status
+            WHERE product_id = ?
+            """,
+            (product_id,),
+        )
+        row = cursor.fetchone()
+        connection.commit()
+
+    return row[0] if row else 1
+
+
+def get_latest_check_run():
+    initialize_database()
+
+    with get_connection() as connection:
+        cursor = connection.cursor()
+        cursor.execute(
+            """
+            SELECT
+                id,
+                started_at,
+                finished_at,
+                status,
+                checked_count,
+                success_count,
+                failure_count,
+                error_message
+            FROM check_runs
+            ORDER BY started_at DESC, id DESC
+            LIMIT 1
+            """
+        )
+        row = cursor.fetchone()
+
+    if row is None:
+        return None
+
+    return {
+        "id": row[0],
+        "started_at": row[1],
+        "finished_at": row[2],
+        "status": row[3],
+        "checked_count": row[4],
+        "success_count": row[5],
+        "failure_count": row[6],
+        "error_message": row[7],
+    }

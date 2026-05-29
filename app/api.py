@@ -5,6 +5,7 @@ from fastapi.responses import HTMLResponse, RedirectResponse
 
 from app.scheduler import load_products, run_once
 from app.storage import (
+    get_latest_check_run,
     get_price_summary,
     get_product,
     initialize_database,
@@ -31,14 +32,30 @@ def startup():
 @app.get("/", response_class=HTMLResponse)
 def root():
     rows = []
+    summaries = get_price_summary()
+    latest_run = get_latest_check_run()
 
-    for item in get_price_summary():
+    for item in summaries:
         latest_price = format_price(item["latest_price"])
         target_price = format_price(item["target_price"])
         lowest_price = format_price(item["lowest_price"])
-        checked_at = item["latest_checked_at"] or "-"
-        status = "Reached" if item["is_target_reached"] else "Watching"
-        status_class = "reached" if item["is_target_reached"] else "watching"
+        checked_at = item["status_last_checked_at"] or item["latest_checked_at"] or "-"
+        target_status = "Reached" if item["is_target_reached"] else "Watching"
+        target_class = "reached" if item["is_target_reached"] else "watching"
+        failure_count = item["consecutive_failures"]
+        if item["status_last_checked_at"] is None:
+            health_status = "Pending"
+            health_class = "pending"
+        elif failure_count:
+            health_status = "Failing"
+            health_class = "failing"
+        else:
+            health_status = "Healthy"
+            health_class = "healthy"
+        last_error = item["last_error"] or ""
+        health_title = (
+            f' title="{escape(last_error)}"' if last_error else ""
+        )
         price_chart = build_price_chart(item["id"])
 
         rows.append(
@@ -50,12 +67,15 @@ def root():
                 <td>{lowest_price}</td>
                 <td>{price_chart}</td>
                 <td>{escape(checked_at)}</td>
-                <td><span class="status {status_class}">{status}</span></td>
+                <td>{failure_count}</td>
+                <td><span class="status {health_class}"{health_title}>{health_status}</span></td>
+                <td><span class="status {target_class}">{target_status}</span></td>
             </tr>
             """
         )
 
     table_rows = "\n".join(rows)
+    status_metrics = build_status_metrics(latest_run, summaries)
 
     return f"""
     <!doctype html>
@@ -120,6 +140,43 @@ def root():
                 background: #1d48ad;
             }}
 
+            .metrics {{
+                display: grid;
+                grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+                gap: 12px;
+                margin-bottom: 16px;
+            }}
+
+            .metric {{
+                border: 1px solid #dfe5f0;
+                border-radius: 6px;
+                background: white;
+                padding: 12px 14px;
+            }}
+
+            .metric-label {{
+                display: block;
+                margin-bottom: 6px;
+                color: #6a768d;
+                font-size: 12px;
+                font-weight: 700;
+                text-transform: uppercase;
+            }}
+
+            .metric-value {{
+                display: block;
+                color: #172033;
+                font-size: 18px;
+                font-weight: 800;
+            }}
+
+            .metric-sub {{
+                display: block;
+                margin-top: 4px;
+                color: #7a869a;
+                font-size: 12px;
+            }}
+
             table {{
                 width: 100%;
                 border-collapse: collapse;
@@ -164,6 +221,21 @@ def root():
             .watching {{
                 background: #fff1d6;
                 color: #835300;
+            }}
+
+            .healthy {{
+                background: #e6f4ff;
+                color: #155b82;
+            }}
+
+            .failing {{
+                background: #ffe5e5;
+                color: #9f1f1f;
+            }}
+
+            .pending {{
+                background: #edf0f5;
+                color: #5f6b7a;
             }}
 
             .chart {{
@@ -221,6 +293,7 @@ def root():
                     <a href="/docs">API Docs</a>
                 </div>
             </header>
+            {status_metrics}
             <table>
                 <thead>
                     <tr>
@@ -230,7 +303,9 @@ def root():
                         <th>Lowest</th>
                         <th>Trend</th>
                         <th>Checked At</th>
-                        <th>Status</th>
+                        <th>Failures</th>
+                        <th>Health</th>
+                        <th>Target</th>
                     </tr>
                 </thead>
                 <tbody>
@@ -249,6 +324,57 @@ def root():
     </body>
     </html>
     """
+
+
+def build_status_metrics(latest_run, summaries):
+    product_count = len(summaries)
+    failing_count = sum(1 for item in summaries if item["consecutive_failures"])
+
+    if latest_run is None:
+        run_status = "-"
+        run_time = "-"
+        run_counts = "0 / 0"
+        run_failures = "0"
+    else:
+        run_status = format_run_status(latest_run["status"])
+        run_time = latest_run["finished_at"] or latest_run["started_at"] or "-"
+        run_counts = f"{latest_run['success_count']} / {latest_run['checked_count']}"
+        run_failures = str(latest_run["failure_count"])
+
+    return f"""
+    <section class="metrics" aria-label="Tracker status">
+        <div class="metric">
+            <span class="metric-label">Last Run</span>
+            <span class="metric-value">{escape(run_status)}</span>
+            <span class="metric-sub">{escape(run_time)}</span>
+        </div>
+        <div class="metric">
+            <span class="metric-label">Success</span>
+            <span class="metric-value">{escape(run_counts)}</span>
+            <span class="metric-sub">successful checks</span>
+        </div>
+        <div class="metric">
+            <span class="metric-label">Failures</span>
+            <span class="metric-value">{escape(run_failures)}</span>
+            <span class="metric-sub">latest run</span>
+        </div>
+        <div class="metric">
+            <span class="metric-label">Products</span>
+            <span class="metric-value">{product_count}</span>
+            <span class="metric-sub">{failing_count} failing</span>
+        </div>
+    </section>
+    """
+
+
+def format_run_status(status):
+    labels = {
+        "running": "Running",
+        "success": "Healthy",
+        "partial_failure": "Partial Failure",
+        "failed": "Failed",
+    }
+    return labels.get(status, status or "-")
 
 
 @app.post("/check-now")
@@ -317,6 +443,32 @@ def health():
     return {
         "message": "SSD price tracker API",
         "docs": "/docs",
+    }
+
+
+@app.get("/status")
+def status():
+    summaries = get_price_summary()
+    latest_run = get_latest_check_run()
+
+    return {
+        "latest_run": latest_run,
+        "product_count": len(summaries),
+        "failing_product_count": sum(
+            1 for item in summaries if item["consecutive_failures"]
+        ),
+        "products": [
+            {
+                "id": item["id"],
+                "name": item["name"],
+                "last_checked_at": item["status_last_checked_at"],
+                "last_success_at": item["last_success_at"],
+                "last_failure_at": item["last_failure_at"],
+                "last_error": item["last_error"],
+                "consecutive_failures": item["consecutive_failures"],
+            }
+            for item in summaries
+        ],
     }
 
 
