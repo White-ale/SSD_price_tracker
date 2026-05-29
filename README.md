@@ -34,7 +34,7 @@ GitHub Actions
 
 ## 주요 기능
 
-- `products.json`에 등록된 상품 가격 수집
+- DB에 등록된 활성 상품 가격 수집
 - 다나와 상품 페이지에서 가격 크롤링
 - SQLite 또는 Turso 클라우드 DB에 가격 기록 저장
 - 목표가 도달 또는 가격 변경 시 Discord 알림 전송
@@ -164,10 +164,10 @@ product_check_status
 
 ```text
 products.json
--> 추적할 상품 목록
+-> 초기 상품 목록 시드 / 로컬 백업
 
 main.py --once
--> 상품 가격을 한 번 확인
+-> DB의 활성 상품 가격을 한 번 확인
 -> DB에 가격 기록 저장
 -> 필요 시 Discord 알림 전송
 
@@ -198,10 +198,13 @@ app/storage.py
 = SQLite 또는 Turso DB 저장 및 조회
 
 app/scheduler.py
-= 상품 목록을 읽고 가격 체크 흐름 실행
+= DB 상품 목록을 읽고 가격 체크 흐름 실행
+
+app/product_source.py
+= DB가 비어 있을 때 products.json으로 초기 상품 시드
 
 app/products_config.py
-= products.json 읽기, 저장, 검증, 상품 추가/수정/삭제
+= products.json 읽기, 저장, 상품 입력값 검증
 
 app/notifier.py
 = Discord 알림 전송
@@ -210,7 +213,7 @@ app/api.py
 = 대시보드, 상품 관리 화면, API 제공
 
 products.json
-= 추적할 상품 목록 원본
+= 초기 상품 목록 시드 / 로컬 백업
 ```
 
 ## 폴더 구조
@@ -328,7 +331,10 @@ TURSO_AUTH_TOKEN=...
 
 ## 상품 설정
 
-추적할 상품은 `products.json`에서 관리합니다.
+추적할 상품은 DB의 `products` 테이블에서 관리합니다.
+
+처음 DB가 비어 있으면 `products.json`에 있는 상품을 초기값으로 넣습니다.
+그 다음부터 자동 가격 체크와 `/manage` 화면은 DB의 활성 상품을 기준으로 동작합니다.
 
 ```json
 [
@@ -359,15 +365,15 @@ target_price
 http://127.0.0.1:8000/manage
 ```
 
-현재는 `products.json`이 상품 목록의 원본입니다. `/manage`에서 상품을 바꾸면 로컬 `products.json`이 수정됩니다.
+`/manage`에서 상품을 바꾸면 DB의 상품 정보가 수정됩니다.
+API 서버와 GitHub Actions가 같은 Turso DB를 바라보고 있으면, 웹에서 바꾼 상품이 다음 자동 실행에 바로 반영됩니다.
 
-GitHub Actions 자동 실행에 상품 변경을 반영하려면 `products.json` 변경사항을 커밋하고 GitHub에 push해야 합니다.
+`products.json`도 함께 갱신되지만, 현재 운영 기준은 DB입니다.
 
 ```text
 /manage에서 상품 변경
--> products.json 변경
--> git commit / push
--> GitHub Actions 자동 실행에 반영
+-> DB products 테이블 변경
+-> 다음 GitHub Actions 자동 실행에 반영
 ```
 
 ## 실행 방법
@@ -381,7 +387,7 @@ GitHub Actions 자동 실행에 상품 변경을 반영하려면 `products.json`
 실행 흐름:
 
 ```text
-products.json 읽기
+DB 활성 상품 읽기
 -> 상품별 URL 접속
 -> 가격 크롤링
 -> DB 저장
@@ -484,14 +490,10 @@ URL 수정
 상품 삭제
 ```
 
-삭제 버튼을 누르면 `products.json`에서는 상품이 제거됩니다.
-
-DB에서는 가격 이력을 지우지 않고 `is_active = 0`으로 비활성화합니다.
+삭제 버튼을 누르면 DB에서는 가격 이력을 지우지 않고 `is_active = 0`으로 비활성화합니다.
+로컬 백업용 `products.json`에서도 상품이 제거됩니다.
 
 ```text
-products.json
--> 상품 제거
-
 products 테이블
 -> is_active = 0
 
@@ -602,10 +604,10 @@ products 1개
 
 ```text
 products.json
-= 추적할 상품 목록 원본
+= DB가 비어 있을 때 사용할 초기 상품 목록 / 로컬 백업
 
 products 테이블
-= 가격 기록과 상태 기록을 연결하기 위한 DB 내부 상품 정보
+= 자동 가격 체크가 실제로 읽는 상품 목록
 ```
 
 ## GitHub Actions 자동 실행
@@ -933,18 +935,18 @@ http://데스크탑_WiFi_IP:8000/
 
 ### `/manage`에서 상품을 바꿨는데 GitHub Actions에 반영되지 않는 경우
 
-현재 상품 목록의 원본은 `products.json`입니다.
+현재 상품 목록의 운영 기준은 DB입니다.
 
-로컬 `/manage`에서 상품을 추가, 수정, 삭제하면 로컬의 `products.json`만 바뀝니다.
-
-GitHub Actions는 GitHub에 올라간 `products.json`을 읽기 때문에, 변경사항을 자동 실행에 반영하려면 커밋하고 push해야 합니다.
+로컬 `/manage`에서 상품을 추가, 수정, 삭제했는데 GitHub Actions에 반영되지 않으면 API 서버와 GitHub Actions가 같은 Turso DB를 보고 있는지 확인합니다.
 
 ```text
-/manage에서 상품 변경
--> products.json 변경
--> git commit
--> git push
--> GitHub Actions에 반영
+로컬 API .env
+-> DATABASE_BACKEND=turso
+-> TURSO_DATABASE_URL 확인
+
+GitHub Secrets
+-> TURSO_DATABASE_URL 확인
+-> TURSO_AUTH_TOKEN 확인
 ```
 
 ### GitHub Actions에서 Turso 값이 비어 있는 경우
@@ -1038,19 +1040,14 @@ price_tracker.db
 venv/
 ```
 
-GitHub Actions가 보는 상품 목록은 GitHub에 올라간 `products.json`입니다.
+GitHub Actions가 보는 상품 목록은 Turso DB의 활성 상품입니다.
 
-따라서 `/manage`에서 상품을 바꾼 뒤 자동 실행에 반영하려면 `products.json`을 커밋하고 push해야 합니다.
+따라서 `/manage`에서 상품을 바꾼 뒤 자동 실행에 반영하려면 로컬 API 서버도 Turso DB를 사용해야 합니다.
 
 ## 한계와 개선 계획
 
-현재 상품 목록의 원본은 `products.json`입니다.
-
-웹 관리 화면에서 상품을 추가, 수정, 삭제할 수는 있지만, GitHub Actions 자동 실행에 반영하려면 변경된 `products.json`을 다시 커밋하고 push해야 합니다.
-
-이 구조는 단순하고 Git으로 변경 이력을 추적하기 쉽다는 장점이 있지만, 웹에서 수정한 상품이 클라우드 자동 실행에 즉시 반영되지 않는다는 한계가 있습니다.
-
-향후에는 상품 목록의 기준을 DB로 전환해, 웹 관리 화면에서 수정한 내용이 GitHub Actions 자동 수집에도 바로 반영되도록 개선할 계획입니다.
+상품 목록의 운영 기준은 DB로 전환했습니다.
+`products.json`은 새 DB를 처음 만들 때 쓰는 초기 시드와 로컬 백업 역할로 남겨 둡니다.
 
 추가 개선 계획:
 
@@ -1067,11 +1064,11 @@ README에 실제 대시보드/상품 관리 화면 스크린샷 추가
 현재 가장 안정적인 운영 흐름은 다음과 같습니다.
 
 ```text
-1. products.json에 추적 상품 등록
-2. GitHub에 push
-3. GitHub Actions가 매시간 두 번 가격 체크를 시도하고 최근 성공이 있으면 중복 실행은 건너뜀
-4. Turso DB에 가격 기록 저장
-5. 로컬에서 main.py --api 실행
+1. 로컬에서 main.py --api 실행
+2. /manage에서 추적 상품 등록 또는 수정
+3. 상품 정보가 Turso DB에 저장됨
+4. GitHub Actions가 매시간 두 번 가격 체크를 시도하고 최근 성공이 있으면 중복 실행은 건너뜀
+5. Turso DB에 가격 기록 저장
 6. 브라우저에서 대시보드와 상품 관리 화면 확인
 ```
 

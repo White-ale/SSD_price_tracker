@@ -6,11 +6,11 @@ from fastapi.responses import HTMLResponse, RedirectResponse
 
 from app.products_config import (
     add_product_to_config,
-    load_products,
     remove_product_from_config,
     update_product_in_config,
     validate_product,
 )
+from app.product_source import seed_products_from_config_if_empty
 from app.scheduler import run_once
 from app.storage import (
     deactivate_product,
@@ -21,7 +21,6 @@ from app.storage import (
     initialize_database,
     list_price_records,
     list_products,
-    sync_products_from_config,
     update_product,
     upsert_product,
 )
@@ -32,7 +31,7 @@ app = FastAPI(title="SSD Price Tracker API")
 @app.on_event("startup")
 def startup():
     initialize_database()
-    sync_products_from_config(load_products())
+    seed_products_from_config_if_empty()
 
 
 @app.get("/", response_class=HTMLResponse)

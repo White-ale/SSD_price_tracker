@@ -256,6 +256,24 @@ def sync_products_from_config(products):
         connection.commit()
 
 
+def count_products(include_inactive=True):
+    initialize_database()
+
+    query = "SELECT COUNT(*) FROM products"
+    parameters = []
+
+    if not include_inactive:
+        query += " WHERE is_active = ?"
+        parameters.append(1)
+
+    with get_connection() as connection:
+        cursor = connection.cursor()
+        cursor.execute(query, parameters)
+        row = cursor.fetchone()
+
+    return row[0]
+
+
 def save_price_record(product_id, name, price):
     checked_at = current_timestamp()
     saved = save_price_record_at(product_id, price, checked_at)

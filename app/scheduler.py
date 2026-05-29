@@ -8,7 +8,7 @@ from app.config import (
 )
 from app.crawler import get_price
 from app.notifier import send_discord_message
-from app.products_config import load_products
+from app.product_source import load_active_products
 from app.storage import (
     finish_check_run,
     get_last_price,
@@ -87,7 +87,7 @@ def run_once():
     print(f"\n--- {current_timestamp()} KST price check started ---")
 
     try:
-        products = load_products()
+        products = load_active_products()
 
         for item in products:
             try:
