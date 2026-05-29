@@ -302,6 +302,48 @@ def root():
                 stroke-width: 2;
             }}
 
+            .chart-point {{
+                fill: white;
+                stroke: #2458d3;
+                stroke-width: 1.6;
+            }}
+
+            .chart-hit {{
+                cursor: pointer;
+                fill: transparent;
+                outline: none;
+                stroke: transparent;
+            }}
+
+            .chart-hit:hover,
+            .chart-hit:focus {{
+                fill: #2458d3;
+                opacity: 0.16;
+            }}
+
+            .chart-tooltip {{
+                position: fixed;
+                z-index: 50;
+                max-width: 260px;
+                border: 1px solid #cfd7e6;
+                border-radius: 6px;
+                background: #172033;
+                color: white;
+                opacity: 0;
+                padding: 8px 10px;
+                pointer-events: none;
+                transform: translate(12px, 12px);
+                transition: opacity 120ms ease;
+                font-size: 12px;
+                font-weight: 700;
+                line-height: 1.45;
+                box-shadow: 0 8px 20px rgba(23, 32, 51, 0.18);
+            }}
+
+            .chart-tooltip.visible {{
+                opacity: 1;
+            }}
+
             .muted {{
                 color: #7a869a;
             }}
@@ -367,6 +409,49 @@ def root():
                 button.textContent = "Checking...";
                 return true;
             }}
+
+            const chartTooltip = document.createElement("div");
+            chartTooltip.className = "chart-tooltip";
+            document.body.appendChild(chartTooltip);
+
+            function moveChartTooltip(event) {{
+                if (!("clientX" in event)) {{
+                    return;
+                }}
+
+                chartTooltip.style.left = `${{event.clientX}}px`;
+                chartTooltip.style.top = `${{event.clientY}}px`;
+            }}
+
+            function moveChartTooltipToElement(element) {{
+                const rect = element.getBoundingClientRect();
+                chartTooltip.style.left = `${{rect.left + rect.width / 2}}px`;
+                chartTooltip.style.top = `${{rect.top + rect.height / 2}}px`;
+            }}
+
+            document.querySelectorAll(".chart-hit").forEach((point) => {{
+                point.addEventListener("mouseenter", (event) => {{
+                    chartTooltip.textContent = point.dataset.tooltip || "";
+                    chartTooltip.classList.add("visible");
+                    moveChartTooltip(event);
+                }});
+
+                point.addEventListener("mousemove", moveChartTooltip);
+
+                point.addEventListener("mouseleave", () => {{
+                    chartTooltip.classList.remove("visible");
+                }});
+
+                point.addEventListener("focus", () => {{
+                    chartTooltip.textContent = point.dataset.tooltip || "";
+                    chartTooltip.classList.add("visible");
+                    moveChartTooltipToElement(point);
+                }});
+
+                point.addEventListener("blur", () => {{
+                    chartTooltip.classList.remove("visible");
+                }});
+            }});
         </script>
     </body>
     </html>
@@ -829,6 +914,7 @@ def build_price_chart(product_id, target_price):
     usable_width = width - padding_x * 2
     usable_height = height - padding_y * 2
     points = []
+    chart_points = []
 
     if len(prices) == 1:
         x = width - padding_x
@@ -840,8 +926,10 @@ def build_price_chart(product_id, target_price):
             usable_height,
         )
         points = [(padding_x, y), (x, y)]
+        chart_points = [(x, y, ordered_records[0])]
     else:
-        for index, price in enumerate(prices):
+        for index, record in enumerate(ordered_records):
+            price = record["price"]
             x = padding_x + (usable_width * index / (len(prices) - 1))
             y = price_to_chart_y(
                 price,
@@ -851,6 +939,7 @@ def build_price_chart(product_id, target_price):
                 usable_height,
             )
             points.append((x, y))
+            chart_points.append((x, y, record))
 
     line_points = " ".join(f"{x:.1f},{y:.1f}" for x, y in points)
     area_points = (
@@ -865,8 +954,16 @@ def build_price_chart(product_id, target_price):
         padding_y,
         usable_height,
     )
-    latest_x, latest_y = points[-1]
+    latest_x, latest_y, _latest_record = chart_points[-1]
     latest_price = prices[-1]
+    visible_points = "\n".join(
+        f'<circle class="chart-point" cx="{x:.1f}" cy="{y:.1f}" r="2.5"></circle>'
+        for x, y, _record in chart_points
+    )
+    hover_points = "\n".join(
+        build_chart_hover_point(x, y, record)
+        for x, y, record in chart_points
+    )
     label = escape(
         f"Recent price trend. Current {latest_price:,} KRW. "
         f"Low {min_price:,} KRW. High {max_price:,} KRW. "
@@ -883,7 +980,9 @@ def build_price_chart(product_id, target_price):
             <polygon class="chart-area" points="{area_points}"></polygon>
             <line class="chart-target" x1="{padding_x}" y1="{target_y:.1f}" x2="{width - padding_x}" y2="{target_y:.1f}"></line>
             <polyline class="chart-line" points="{line_points}"></polyline>
+            {visible_points}
             <circle class="chart-dot" cx="{latest_x:.1f}" cy="{latest_y:.1f}" r="4"></circle>
+            {hover_points}
         </svg>
         <div class="trend-scale">
             <span>Low {format_price(min_price)}</span>
@@ -891,6 +990,18 @@ def build_price_chart(product_id, target_price):
         </div>
     </div>
     """
+
+
+def build_chart_hover_point(x, y, record):
+    tooltip = escape(
+        f"{format_timestamp(record['checked_at'])} | {format_price(record['price'])}",
+        quote=True,
+    )
+
+    return (
+        f'<circle class="chart-hit" cx="{x:.1f}" cy="{y:.1f}" r="9" '
+        f'tabindex="0" data-tooltip="{tooltip}"><title>{tooltip}</title></circle>'
+    )
 
 
 def price_to_chart_y(price, display_max, price_range, padding_y, usable_height):
