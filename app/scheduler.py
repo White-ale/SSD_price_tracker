@@ -4,6 +4,7 @@ from app.config import (
     CHECK_INTERVAL_SECONDS,
     FAILURE_ALERT_THRESHOLD,
     MIN_CHECK_INTERVAL_MINUTES,
+    PRICE_CHANGE_ALERT_THRESHOLD_KRW,
     REQUEST_DELAY_SECONDS,
 )
 from app.crawler import get_price
@@ -51,20 +52,66 @@ def check_product(item):
     save_price_record(product_id, name, current_price)
     record_product_check_success(product_id)
 
-    if current_price == last_price:
-        print(f"[{name}] no change ({current_price} KRW)")
-        return True
+    message = build_price_notification_message(
+        name,
+        current_price,
+        last_price,
+        target_price,
+    )
 
-    if current_price <= target_price:
-        message = (
-            f"[Target reached] {name}\n"
-            f"Current price: {current_price} KRW / Target: {target_price} KRW"
-        )
-    else:
-        message = f"[Price changed] {name}: {last_price} -> {current_price} KRW"
+    if message is None:
+        return True
 
     send_discord_message(message)
     return True
+
+
+def format_krw(price):
+    return f"{price:,} KRW"
+
+
+def build_price_notification_message(name, current_price, last_price, target_price):
+    if last_price == 0:
+        if current_price <= target_price:
+            return (
+                f"[Target reached] {name}\n"
+                f"Current price: {format_krw(current_price)} / "
+                f"Target: {format_krw(target_price)}\n"
+                "First tracked price is already at or below target."
+            )
+
+        print(f"[{name}] first price saved ({format_krw(current_price)}).")
+        return None
+
+    if current_price == last_price:
+        print(f"[{name}] no change ({format_krw(current_price)})")
+        return None
+
+    target_crossed = last_price > target_price and current_price <= target_price
+    if target_crossed:
+        return (
+            f"[Target reached] {name}\n"
+            f"Previous price: {format_krw(last_price)}\n"
+            f"Current price: {format_krw(current_price)} / "
+            f"Target: {format_krw(target_price)}"
+        )
+
+    price_delta = current_price - last_price
+    if abs(price_delta) < PRICE_CHANGE_ALERT_THRESHOLD_KRW:
+        print(
+            f"[{name}] small change ignored "
+            f"({format_krw(last_price)} -> {format_krw(current_price)})."
+        )
+        return None
+
+    direction = "dropped" if price_delta < 0 else "increased"
+    return (
+        f"[Price {direction}] {name}\n"
+        f"Previous price: {format_krw(last_price)}\n"
+        f"Current price: {format_krw(current_price)}\n"
+        f"Change: {format_krw(abs(price_delta))}\n"
+        f"Target: {format_krw(target_price)}"
+    )
 
 
 def run_once():

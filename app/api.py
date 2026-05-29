@@ -63,7 +63,7 @@ def root():
         health_title = (
             f' title="{escape(last_error)}"' if last_error else ""
         )
-        price_chart = build_price_chart(item["id"])
+        price_chart = build_price_chart(item["id"], item["target_price"])
 
         rows.append(
             f"""
@@ -245,10 +245,37 @@ def root():
                 color: #5f6b7a;
             }}
 
+            .trend-panel {{
+                min-width: 280px;
+            }}
+
+            .trend-head,
+            .trend-scale {{
+                display: flex;
+                align-items: center;
+                justify-content: space-between;
+                gap: 12px;
+                color: #69768d;
+                font-size: 12px;
+            }}
+
+            .trend-head {{
+                margin-bottom: 5px;
+            }}
+
+            .trend-head strong {{
+                color: #172033;
+                font-size: 13px;
+            }}
+
+            .trend-scale {{
+                margin-top: 4px;
+            }}
+
             .chart {{
                 display: block;
-                width: 180px;
-                height: 52px;
+                width: 100%;
+                height: 86px;
             }}
 
             .chart-line {{
@@ -256,11 +283,23 @@ def root():
                 stroke: #2458d3;
                 stroke-linecap: round;
                 stroke-linejoin: round;
-                stroke-width: 3;
+                stroke-width: 2.8;
             }}
 
             .chart-area {{
                 fill: #eef3fb;
+            }}
+
+            .chart-target {{
+                stroke: #d78a00;
+                stroke-dasharray: 5 5;
+                stroke-width: 1.5;
+            }}
+
+            .chart-dot {{
+                fill: #2458d3;
+                stroke: white;
+                stroke-width: 2;
             }}
 
             .muted {{
@@ -765,52 +804,97 @@ def format_timestamp(timestamp):
     return f"{timestamp} KST"
 
 
-def build_price_chart(product_id):
+def build_price_chart(product_id, target_price):
     records = list_price_records(product_id, limit=30)
-    prices = [record["price"] for record in reversed(records)]
+    ordered_records = list(reversed(records))
+    prices = [record["price"] for record in ordered_records]
 
     if not prices:
         return '<span class="muted">-</span>'
 
-    width = 180
-    height = 52
-    padding = 5
+    width = 300
+    height = 86
+    padding_x = 10
+    padding_y = 10
     min_price = min(prices)
     max_price = max(prices)
-    price_range = max_price - min_price
-    usable_width = width - padding * 2
-    usable_height = height - padding * 2
+    display_min = min(min_price, target_price)
+    display_max = max(max_price, target_price)
+
+    if display_min == display_max:
+        display_min -= 1000
+        display_max += 1000
+
+    price_range = display_max - display_min
+    usable_width = width - padding_x * 2
+    usable_height = height - padding_y * 2
     points = []
 
     if len(prices) == 1:
-        points = [(padding, height / 2), (width - padding, height / 2)]
+        x = width - padding_x
+        y = price_to_chart_y(
+            prices[0],
+            display_max,
+            price_range,
+            padding_y,
+            usable_height,
+        )
+        points = [(padding_x, y), (x, y)]
     else:
         for index, price in enumerate(prices):
-            x = padding + (usable_width * index / (len(prices) - 1))
-
-            if price_range == 0:
-                y = height / 2
-            else:
-                y = padding + usable_height * (max_price - price) / price_range
-
+            x = padding_x + (usable_width * index / (len(prices) - 1))
+            y = price_to_chart_y(
+                price,
+                display_max,
+                price_range,
+                padding_y,
+                usable_height,
+            )
             points.append((x, y))
 
     line_points = " ".join(f"{x:.1f},{y:.1f}" for x, y in points)
     area_points = (
-        f"{padding},{height - padding} "
+        f"{padding_x},{height - padding_y} "
         f"{line_points} "
-        f"{width - padding},{height - padding}"
+        f"{width - padding_x},{height - padding_y}"
     )
+    target_y = price_to_chart_y(
+        target_price,
+        display_max,
+        price_range,
+        padding_y,
+        usable_height,
+    )
+    latest_x, latest_y = points[-1]
+    latest_price = prices[-1]
     label = escape(
-        f"Recent price trend from {min_price:,} KRW to {max_price:,} KRW"
+        f"Recent price trend. Current {latest_price:,} KRW. "
+        f"Low {min_price:,} KRW. High {max_price:,} KRW. "
+        f"Target {target_price:,} KRW."
     )
 
     return f"""
-    <svg class="chart" viewBox="0 0 {width} {height}" role="img" aria-label="{label}">
-        <polygon class="chart-area" points="{area_points}"></polygon>
-        <polyline class="chart-line" points="{line_points}"></polyline>
-    </svg>
+    <div class="trend-panel">
+        <div class="trend-head">
+            <span>Now <strong>{format_price(latest_price)}</strong></span>
+            <span>Target {format_price(target_price)}</span>
+        </div>
+        <svg class="chart" viewBox="0 0 {width} {height}" role="img" aria-label="{label}">
+            <polygon class="chart-area" points="{area_points}"></polygon>
+            <line class="chart-target" x1="{padding_x}" y1="{target_y:.1f}" x2="{width - padding_x}" y2="{target_y:.1f}"></line>
+            <polyline class="chart-line" points="{line_points}"></polyline>
+            <circle class="chart-dot" cx="{latest_x:.1f}" cy="{latest_y:.1f}" r="4"></circle>
+        </svg>
+        <div class="trend-scale">
+            <span>Low {format_price(min_price)}</span>
+            <span>High {format_price(max_price)}</span>
+        </div>
+    </div>
     """
+
+
+def price_to_chart_y(price, display_max, price_range, padding_y, usable_height):
+    return padding_y + usable_height * (display_max - price) / price_range
 
 
 @app.get("/health")
