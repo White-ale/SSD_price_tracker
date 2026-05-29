@@ -29,10 +29,7 @@ def create_connection():
         return sqlite3.connect(DATABASE_FILE, timeout=30)
 
     if DATABASE_BACKEND == "turso":
-        if not TURSO_DATABASE_URL or not TURSO_AUTH_TOKEN:
-            raise RuntimeError(
-                "Turso database requires TURSO_DATABASE_URL and TURSO_AUTH_TOKEN."
-            )
+        validate_turso_settings()
 
         try:
             import libsql
@@ -48,6 +45,31 @@ def create_connection():
         )
 
     raise RuntimeError(f"Unsupported DATABASE_BACKEND: {DATABASE_BACKEND}")
+
+
+def validate_turso_settings():
+    if not TURSO_DATABASE_URL or not TURSO_AUTH_TOKEN:
+        raise RuntimeError(
+            "Turso database requires TURSO_DATABASE_URL and TURSO_AUTH_TOKEN."
+        )
+
+    if TURSO_DATABASE_URL.startswith("TURSO_DATABASE_URL="):
+        raise RuntimeError(
+            "TURSO_DATABASE_URL must be the URL only, without "
+            "the 'TURSO_DATABASE_URL=' prefix."
+        )
+
+    if not TURSO_DATABASE_URL.startswith("libsql://"):
+        raise RuntimeError("TURSO_DATABASE_URL must start with libsql://.")
+
+    if TURSO_AUTH_TOKEN.startswith("TURSO_AUTH_TOKEN="):
+        raise RuntimeError(
+            "TURSO_AUTH_TOKEN must be the token only, without "
+            "the 'TURSO_AUTH_TOKEN=' prefix."
+        )
+
+    if "\n" in TURSO_AUTH_TOKEN or "\r" in TURSO_AUTH_TOKEN:
+        raise RuntimeError("TURSO_AUTH_TOKEN must be a single line.")
 
 
 def rows_to_dicts(cursor, rows):

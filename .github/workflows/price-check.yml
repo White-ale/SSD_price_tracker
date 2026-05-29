@@ -37,6 +37,22 @@ jobs:
             echo "::error::Set TURSO_DATABASE_URL and TURSO_AUTH_TOKEN in repository Actions secrets."
             exit 1
           fi
+          if [[ "$TURSO_DATABASE_URL" == TURSO_DATABASE_URL=* ]]; then
+            echo "::error::TURSO_DATABASE_URL secret must be the URL only, without 'TURSO_DATABASE_URL='."
+            exit 1
+          fi
+          if [[ "$TURSO_DATABASE_URL" != libsql://* ]]; then
+            echo "::error::TURSO_DATABASE_URL secret must start with libsql://."
+            exit 1
+          fi
+          if [[ "$TURSO_AUTH_TOKEN" == TURSO_AUTH_TOKEN=* ]]; then
+            echo "::error::TURSO_AUTH_TOKEN secret must be the token only, without 'TURSO_AUTH_TOKEN='."
+            exit 1
+          fi
+          if [[ "$TURSO_AUTH_TOKEN" == *$'\n'* || "$TURSO_AUTH_TOKEN" == *$'\r'* ]]; then
+            echo "::error::TURSO_AUTH_TOKEN secret must be one line with no line breaks."
+            exit 1
+          fi
 
       - name: Run price check
         env:

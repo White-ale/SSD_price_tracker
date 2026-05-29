@@ -30,22 +30,26 @@ def get_int_env(name, default):
     return int(value)
 
 
+def get_text_env(name, default=""):
+    return os.getenv(name, default).strip().strip('"').strip("'")
+
+
 load_env_file()
 
 PRODUCTS_FILE = os.path.join(BASE_DIR, "products.json")
 DATABASE_FILE = os.path.join(BASE_DIR, "price_tracker.db")
-DATABASE_BACKEND = os.getenv(
+DATABASE_BACKEND = get_text_env(
     "DATABASE_BACKEND",
     "turso" if os.getenv("TURSO_DATABASE_URL") else "sqlite",
-).strip().lower()
-TURSO_DATABASE_URL = os.getenv("TURSO_DATABASE_URL", "")
-TURSO_AUTH_TOKEN = os.getenv("TURSO_AUTH_TOKEN", "")
+).lower()
+TURSO_DATABASE_URL = get_text_env("TURSO_DATABASE_URL")
+TURSO_AUTH_TOKEN = get_text_env("TURSO_AUTH_TOKEN")
 CHECK_INTERVAL_SECONDS = get_int_env("CHECK_INTERVAL_SECONDS", 60 * 60)
 REQUEST_DELAY_SECONDS = get_int_env("REQUEST_DELAY_SECONDS", 3)
 FAILURE_ALERT_THRESHOLD = get_int_env("FAILURE_ALERT_THRESHOLD", 3)
-API_HOST = os.getenv("API_HOST", "127.0.0.1")
+API_HOST = get_text_env("API_HOST", "127.0.0.1")
 API_PORT = get_int_env("API_PORT", 8000)
-DISCORD_WEBHOOK_URL = os.getenv("DISCORD_WEBHOOK_URL", "")
+DISCORD_WEBHOOK_URL = get_text_env("DISCORD_WEBHOOK_URL")
 HEADERS = {
     "User-Agent": (
         "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
