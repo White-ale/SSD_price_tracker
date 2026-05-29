@@ -1,15 +1,14 @@
-import json
 import time
 from datetime import datetime
 
 from app.config import (
     CHECK_INTERVAL_SECONDS,
     FAILURE_ALERT_THRESHOLD,
-    PRODUCTS_FILE,
     REQUEST_DELAY_SECONDS,
 )
 from app.crawler import get_price
 from app.notifier import send_discord_message
+from app.products_config import load_products
 from app.storage import (
     finish_check_run,
     get_last_price,
@@ -20,11 +19,6 @@ from app.storage import (
     start_check_run,
     upsert_product,
 )
-
-
-def load_products():
-    with open(PRODUCTS_FILE, "r", encoding="utf-8") as file:
-        return json.load(file)
 
 
 def check_product(item):

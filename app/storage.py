@@ -24,6 +24,16 @@ def rows_to_dicts(cursor, rows):
     return [dict(zip(columns, row)) for row in rows]
 
 
+def ensure_column(cursor, table_name, column_name, column_definition):
+    cursor.execute(f"PRAGMA table_info({table_name})")
+    columns = [row[1] for row in cursor.fetchall()]
+
+    if column_name not in columns:
+        cursor.execute(
+            f"ALTER TABLE {table_name} ADD COLUMN {column_name} {column_definition}"
+        )
+
+
 def initialize_database():
     with get_connection() as connection:
         cursor = connection.cursor()
@@ -35,9 +45,17 @@ def initialize_database():
                 name TEXT NOT NULL UNIQUE,
                 url TEXT NOT NULL,
                 target_price INTEGER NOT NULL,
+                is_active INTEGER NOT NULL DEFAULT 1,
                 created_at TEXT NOT NULL
             )
             """
+        )
+
+        ensure_column(
+            cursor,
+            "products",
+            "is_active",
+            "INTEGER NOT NULL DEFAULT 1",
         )
 
         cursor.execute(
@@ -104,7 +122,8 @@ def upsert_product(name, url, target_price):
             VALUES (?, ?, ?, ?)
             ON CONFLICT(name) DO UPDATE SET
                 url = excluded.url,
-                target_price = excluded.target_price
+                target_price = excluded.target_price,
+                is_active = 1
             """,
             (name, url, target_price, now),
         )
@@ -112,6 +131,69 @@ def upsert_product(name, url, target_price):
 
         cursor.execute("SELECT id FROM products WHERE name = ?", (name,))
         return cursor.fetchone()[0]
+
+
+def update_product(product_id, name, url, target_price):
+    with get_connection() as connection:
+        cursor = connection.cursor()
+        cursor.execute(
+            """
+            UPDATE products
+            SET
+                name = ?,
+                url = ?,
+                target_price = ?,
+                is_active = 1
+            WHERE id = ? AND is_active = 1
+            """,
+            (name, url, target_price, product_id),
+        )
+        connection.commit()
+        return cursor.rowcount == 1
+
+
+def deactivate_product(product_id):
+    with get_connection() as connection:
+        cursor = connection.cursor()
+        cursor.execute(
+            """
+            UPDATE products
+            SET is_active = 0
+            WHERE id = ? AND is_active = 1
+            """,
+            (product_id,),
+        )
+        connection.commit()
+        return cursor.rowcount == 1
+
+
+def sync_products_from_config(products):
+    for product in products:
+        upsert_product(
+            product["name"],
+            product["url"],
+            product["target_price"],
+        )
+
+    active_names = [product["name"] for product in products]
+
+    with get_connection() as connection:
+        cursor = connection.cursor()
+
+        if active_names:
+            placeholders = ", ".join("?" for _ in active_names)
+            cursor.execute(
+                f"""
+                UPDATE products
+                SET is_active = 0
+                WHERE name NOT IN ({placeholders})
+                """,
+                active_names,
+            )
+        else:
+            cursor.execute("UPDATE products SET is_active = 0")
+
+        connection.commit()
 
 
 def save_price_record(product_id, name, price):
@@ -166,6 +248,7 @@ def list_products():
             """
             SELECT id, name, url, target_price, created_at
             FROM products
+            WHERE is_active = 1
             ORDER BY id
             """
         )
@@ -181,10 +264,40 @@ def get_product(product_id):
             """
             SELECT id, name, url, target_price, created_at
             FROM products
-            WHERE id = ?
+            WHERE id = ? AND is_active = 1
             """,
             (product_id,),
         )
+        row = cursor.fetchone()
+
+    if row is None:
+        return None
+
+    return {
+        "id": row[0],
+        "name": row[1],
+        "url": row[2],
+        "target_price": row[3],
+        "created_at": row[4],
+    }
+
+
+def get_product_by_name(name, include_inactive=False):
+    initialize_database()
+
+    query = """
+        SELECT id, name, url, target_price, created_at
+        FROM products
+        WHERE name = ?
+    """
+    parameters = [name]
+
+    if not include_inactive:
+        query += " AND is_active = 1"
+
+    with get_connection() as connection:
+        cursor = connection.cursor()
+        cursor.execute(query, parameters)
         row = cursor.fetchone()
 
     if row is None:
@@ -252,6 +365,7 @@ def get_price_summary():
                 )
             LEFT JOIN product_check_status
                 ON product_check_status.product_id = products.id
+            WHERE products.is_active = 1
             GROUP BY products.id
             ORDER BY products.id
             """

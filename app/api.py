@@ -1,16 +1,28 @@
 from html import escape
+from urllib.parse import parse_qs
 
-from fastapi import FastAPI, HTTPException, Query
+from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
 
-from app.scheduler import load_products, run_once
+from app.products_config import (
+    add_product_to_config,
+    load_products,
+    remove_product_from_config,
+    update_product_in_config,
+    validate_product,
+)
+from app.scheduler import run_once
 from app.storage import (
+    deactivate_product,
     get_latest_check_run,
     get_price_summary,
     get_product,
+    get_product_by_name,
     initialize_database,
     list_price_records,
     list_products,
+    sync_products_from_config,
+    update_product,
     upsert_product,
 )
 
@@ -20,13 +32,7 @@ app = FastAPI(title="SSD Price Tracker API")
 @app.on_event("startup")
 def startup():
     initialize_database()
-
-    for product in load_products():
-        upsert_product(
-            product["name"],
-            product["url"],
-            product["target_price"],
-        )
+    sync_products_from_config(load_products())
 
 
 @app.get("/", response_class=HTMLResponse)
@@ -290,6 +296,7 @@ def root():
                     <form action="/check-now" method="post" onsubmit="return showChecking(this);">
                         <button type="submit">Check Now</button>
                     </form>
+                    <a href="/manage">Manage</a>
                     <a href="/docs">API Docs</a>
                 </div>
             </header>
@@ -323,6 +330,364 @@ def root():
         </script>
     </body>
     </html>
+    """
+
+
+@app.get("/manage", response_class=HTMLResponse)
+def manage_products():
+    return render_manage_page()
+
+
+@app.post("/manage/products")
+async def add_product(request: Request):
+    form = await parse_product_form(request)
+
+    try:
+        product = add_product_to_config(
+            form.get("name", ""),
+            form.get("url", ""),
+            form.get("target_price", ""),
+        )
+        upsert_product(
+            product["name"],
+            product["url"],
+            product["target_price"],
+        )
+    except ValueError as error:
+        return HTMLResponse(render_manage_page(str(error)), status_code=400)
+
+    return RedirectResponse(url="/manage", status_code=303)
+
+
+@app.post("/manage/products/{product_id}")
+async def edit_product(product_id: int, request: Request):
+    existing_product = get_product(product_id)
+
+    if existing_product is None:
+        raise HTTPException(status_code=404, detail="Product not found")
+
+    form = await parse_product_form(request)
+
+    try:
+        product = validate_product(
+            form.get("name", ""),
+            form.get("url", ""),
+            form.get("target_price", ""),
+        )
+        product_with_same_name = get_product_by_name(
+            product["name"],
+            include_inactive=True,
+        )
+
+        if (
+            product_with_same_name is not None
+            and product_with_same_name["id"] != product_id
+        ):
+            raise ValueError("Product name already exists.")
+
+        update_product_in_config(
+            existing_product["name"],
+            product["name"],
+            product["url"],
+            product["target_price"],
+        )
+
+        if not update_product(
+            product_id,
+            product["name"],
+            product["url"],
+            product["target_price"],
+        ):
+            raise ValueError("Product was not updated.")
+    except ValueError as error:
+        return HTMLResponse(render_manage_page(str(error)), status_code=400)
+
+    return RedirectResponse(url="/manage", status_code=303)
+
+
+@app.post("/manage/products/{product_id}/delete")
+def delete_product(product_id: int):
+    product = get_product(product_id)
+
+    if product is None:
+        raise HTTPException(status_code=404, detail="Product not found")
+
+    remove_product_from_config(product["name"])
+    deactivate_product(product_id)
+    return RedirectResponse(url="/manage", status_code=303)
+
+
+async def parse_product_form(request):
+    body = (await request.body()).decode("utf-8")
+    fields = parse_qs(body, keep_blank_values=True)
+    return {key: values[0] if values else "" for key, values in fields.items()}
+
+
+def render_manage_page(error=None):
+    products = list_products()
+    product_cards = "\n".join(build_product_form(product) for product in products)
+    error_html = (
+        f'<div class="alert" role="alert">{escape(error)}</div>' if error else ""
+    )
+
+    if not product_cards:
+        product_cards = '<div class="empty">No products are being tracked.</div>'
+
+    return f"""
+    <!doctype html>
+    <html lang="ko">
+    <head>
+        <meta charset="utf-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1">
+        <title>Manage Products</title>
+        <style>
+            body {{
+                margin: 0;
+                font-family: Arial, sans-serif;
+                background: #f5f7fb;
+                color: #172033;
+            }}
+
+            main {{
+                max-width: 1100px;
+                margin: 0 auto;
+                padding: 32px 20px;
+            }}
+
+            header {{
+                display: flex;
+                align-items: end;
+                justify-content: space-between;
+                gap: 16px;
+                margin-bottom: 20px;
+            }}
+
+            h1,
+            h2 {{
+                margin: 0;
+            }}
+
+            h1 {{
+                font-size: 28px;
+                font-weight: 700;
+            }}
+
+            h2 {{
+                font-size: 18px;
+                font-weight: 800;
+            }}
+
+            a {{
+                color: #2458d3;
+                text-decoration: none;
+                font-weight: 600;
+            }}
+
+            .actions,
+            .form-actions {{
+                display: flex;
+                align-items: center;
+                gap: 12px;
+                flex-wrap: wrap;
+            }}
+
+            .form-actions {{
+                margin-top: 12px;
+            }}
+
+            form {{
+                margin: 0;
+            }}
+
+            .panel,
+            .product-card {{
+                border: 1px solid #dfe5f0;
+                border-radius: 6px;
+                background: white;
+            }}
+
+            .panel {{
+                margin-bottom: 18px;
+                padding: 16px;
+            }}
+
+            .product-list {{
+                display: grid;
+                gap: 12px;
+            }}
+
+            .product-card {{
+                padding: 14px;
+            }}
+
+            .grid {{
+                display: grid;
+                grid-template-columns: minmax(160px, 1fr) minmax(240px, 2fr) 150px;
+                gap: 12px;
+            }}
+
+            label {{
+                display: grid;
+                gap: 6px;
+                color: #46556f;
+                font-size: 13px;
+                font-weight: 700;
+            }}
+
+            input {{
+                box-sizing: border-box;
+                width: 100%;
+                border: 1px solid #cfd7e6;
+                border-radius: 6px;
+                padding: 9px 10px;
+                color: #172033;
+                font: inherit;
+                font-size: 14px;
+            }}
+
+            input:focus {{
+                border-color: #2458d3;
+                outline: 2px solid #d9e5ff;
+            }}
+
+            button {{
+                cursor: pointer;
+                border: 0;
+                border-radius: 6px;
+                background: #2458d3;
+                color: white;
+                padding: 9px 14px;
+                font: inherit;
+                font-size: 14px;
+                font-weight: 700;
+            }}
+
+            button:hover {{
+                background: #1d48ad;
+            }}
+
+            .danger {{
+                background: #b3261e;
+            }}
+
+            .danger:hover {{
+                background: #8f1d17;
+            }}
+
+            .alert {{
+                margin-bottom: 16px;
+                border: 1px solid #ffc9c9;
+                border-radius: 6px;
+                background: #ffecec;
+                color: #9f1f1f;
+                padding: 10px 12px;
+                font-size: 14px;
+                font-weight: 700;
+            }}
+
+            .empty {{
+                border: 1px solid #dfe5f0;
+                border-radius: 6px;
+                background: white;
+                color: #7a869a;
+                padding: 16px;
+            }}
+
+            .section-title {{
+                margin: 22px 0 12px;
+            }}
+
+            @media (max-width: 760px) {{
+                main {{
+                    padding: 20px 12px;
+                }}
+
+                header {{
+                    align-items: start;
+                    flex-direction: column;
+                }}
+
+                .grid {{
+                    grid-template-columns: 1fr;
+                }}
+            }}
+        </style>
+    </head>
+    <body>
+        <main>
+            <header>
+                <h1>Manage Products</h1>
+                <div class="actions">
+                    <a href="/">Dashboard</a>
+                    <a href="/docs">API Docs</a>
+                </div>
+            </header>
+            {error_html}
+            <section class="panel">
+                <h2>Add Product</h2>
+                <form action="/manage/products" method="post">
+                    <div class="grid">
+                        <label>
+                            Name
+                            <input name="name" required>
+                        </label>
+                        <label>
+                            URL
+                            <input name="url" type="url" required>
+                        </label>
+                        <label>
+                            Target
+                            <input name="target_price" type="number" min="1" required>
+                        </label>
+                    </div>
+                    <div class="form-actions">
+                        <button type="submit">Add</button>
+                    </div>
+                </form>
+            </section>
+            <h2 class="section-title">Tracked Products</h2>
+            <section class="product-list">
+                {product_cards}
+            </section>
+        </main>
+    </body>
+    </html>
+    """
+
+
+def build_product_form(product):
+    product_id = product["id"]
+    name = escape(product["name"], quote=True)
+    url = escape(product["url"], quote=True)
+    target_price = product["target_price"]
+
+    return f"""
+    <article class="product-card">
+        <form action="/manage/products/{product_id}" method="post">
+            <div class="grid">
+                <label>
+                    Name
+                    <input name="name" value="{name}" required>
+                </label>
+                <label>
+                    URL
+                    <input name="url" type="url" value="{url}" required>
+                </label>
+                <label>
+                    Target
+                    <input name="target_price" type="number" min="1" value="{target_price}" required>
+                </label>
+            </div>
+            <div class="form-actions">
+                <button type="submit">Save</button>
+            </div>
+        </form>
+        <form action="/manage/products/{product_id}/delete" method="post" onsubmit="return confirm('Remove this product from tracking?');">
+            <div class="form-actions">
+                <button class="danger" type="submit">Delete</button>
+            </div>
+        </form>
+    </article>
     """
 
 
