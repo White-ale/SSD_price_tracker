@@ -3,6 +3,7 @@ import time
 from app.config import (
     CHECK_INTERVAL_SECONDS,
     FAILURE_ALERT_THRESHOLD,
+    MIN_CHECK_INTERVAL_MINUTES,
     REQUEST_DELAY_SECONDS,
 )
 from app.crawler import get_price
@@ -11,6 +12,7 @@ from app.products_config import load_products
 from app.storage import (
     finish_check_run,
     get_last_price,
+    get_recent_successful_check_run,
     initialize_database,
     record_product_check_failure,
     record_product_check_success,
@@ -67,6 +69,16 @@ def check_product(item):
 
 def run_once():
     initialize_database()
+
+    recent_success = get_recent_successful_check_run(MIN_CHECK_INTERVAL_MINUTES)
+    if recent_success:
+        finished_at = recent_success["finished_at"] or recent_success["started_at"]
+        print(
+            "\n--- price check skipped. "
+            f"Run #{recent_success['id']} already succeeded at {finished_at} KST. ---"
+        )
+        return
+
     run_id = start_check_run()
     success_count = 0
     failure_count = 0

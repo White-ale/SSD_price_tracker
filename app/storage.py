@@ -10,10 +10,15 @@ from app.config import (
 )
 
 KST = timezone(timedelta(hours=9))
+TIMESTAMP_FORMAT = "%Y-%m-%d %H:%M:%S"
+
+
+def current_datetime():
+    return datetime.now(KST)
 
 
 def current_timestamp():
-    return datetime.now(KST).strftime("%Y-%m-%d %H:%M:%S")
+    return current_datetime().strftime(TIMESTAMP_FORMAT)
 
 
 @contextmanager
@@ -599,4 +604,44 @@ def get_latest_check_run():
         "success_count": row[5],
         "failure_count": row[6],
         "error_message": row[7],
+    }
+
+
+def get_recent_successful_check_run(within_minutes):
+    if within_minutes <= 0:
+        return None
+
+    initialize_database()
+    cutoff = (current_datetime() - timedelta(minutes=within_minutes)).strftime(
+        TIMESTAMP_FORMAT
+    )
+
+    with get_connection() as connection:
+        cursor = connection.cursor()
+        cursor.execute(
+            """
+            SELECT
+                id,
+                started_at,
+                finished_at,
+                checked_count,
+                success_count
+            FROM check_runs
+            WHERE status = ? AND COALESCE(finished_at, started_at) >= ?
+            ORDER BY COALESCE(finished_at, started_at) DESC, id DESC
+            LIMIT 1
+            """,
+            ("success", cutoff),
+        )
+        row = cursor.fetchone()
+
+    if row is None:
+        return None
+
+    return {
+        "id": row[0],
+        "started_at": row[1],
+        "finished_at": row[2],
+        "checked_count": row[3],
+        "success_count": row[4],
     }
