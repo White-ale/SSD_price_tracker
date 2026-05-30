@@ -1,8 +1,10 @@
+from pathlib import Path
 from html import escape
 from urllib.parse import parse_qs
 
 from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
+from fastapi.staticfiles import StaticFiles
 
 from app.products_config import (
     add_product_to_config,
@@ -29,6 +31,82 @@ from app.storage import (
 )
 
 app = FastAPI(title="SSD Price Tracker API")
+STATIC_DIR = Path(__file__).with_name("static")
+app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
+
+FONT_FACE_CSS = """
+            @font-face {
+                font-family: 'Paperlogy';
+                src: url('/static/fonts/Paperlogy-1Thin.ttf') format('truetype');
+                font-weight: 100;
+                font-style: normal;
+                font-display: swap;
+            }
+
+            @font-face {
+                font-family: 'Paperlogy';
+                src: url('/static/fonts/Paperlogy-2ExtraLight.ttf') format('truetype');
+                font-weight: 200;
+                font-style: normal;
+                font-display: swap;
+            }
+
+            @font-face {
+                font-family: 'Paperlogy';
+                src: url('/static/fonts/Paperlogy-3Light.ttf') format('truetype');
+                font-weight: 300;
+                font-style: normal;
+                font-display: swap;
+            }
+
+            @font-face {
+                font-family: 'Paperlogy';
+                src: url('/static/fonts/Paperlogy-4Regular.ttf') format('truetype');
+                font-weight: 400;
+                font-style: normal;
+                font-display: swap;
+            }
+
+            @font-face {
+                font-family: 'Paperlogy';
+                src: url('/static/fonts/Paperlogy-5Medium.ttf') format('truetype');
+                font-weight: 500;
+                font-style: normal;
+                font-display: swap;
+            }
+
+            @font-face {
+                font-family: 'Paperlogy';
+                src: url('/static/fonts/Paperlogy-6SemiBold.ttf') format('truetype');
+                font-weight: 600;
+                font-style: normal;
+                font-display: swap;
+            }
+
+            @font-face {
+                font-family: 'Paperlogy';
+                src: url('/static/fonts/Paperlogy-7Bold.ttf') format('truetype');
+                font-weight: 700;
+                font-style: normal;
+                font-display: swap;
+            }
+
+            @font-face {
+                font-family: 'Paperlogy';
+                src: url('/static/fonts/Paperlogy-8ExtraBold.ttf') format('truetype');
+                font-weight: 800;
+                font-style: normal;
+                font-display: swap;
+            }
+
+            @font-face {
+                font-family: 'Paperlogy';
+                src: url('/static/fonts/Paperlogy-9Black.ttf') format('truetype');
+                font-weight: 900;
+                font-style: normal;
+                font-display: swap;
+            }
+"""
 
 CHART_PERIODS = {
     "7d": ("7일", 7),
@@ -48,7 +126,7 @@ def startup():
 
 @app.get("/", response_class=HTMLResponse)
 def root(period: str = Query(default=DEFAULT_CHART_PERIOD)):
-    rows = []
+    product_cards = []
     summaries = get_price_summary()
     period_key, period_label, period_days = get_chart_period(period)
     period_tabs = build_period_tabs(period_key)
@@ -57,10 +135,7 @@ def root(period: str = Query(default=DEFAULT_CHART_PERIOD)):
         latest_price = format_price(item["latest_price"])
         target_price = format_price(item["target_price"])
         lowest_price = format_price(item["lowest_price"])
-        checked_at = format_timestamp(
-            item["status_last_checked_at"] or item["latest_checked_at"]
-        )
-        target_status = "At Target" if item["is_target_reached"] else "Watching"
+        target_status = "지금 살만해요" if item["is_target_reached"] else "조금 더 기다려요"
         target_class = "reached" if item["is_target_reached"] else "watching"
         price_chart = build_price_chart(
             item["id"],
@@ -68,27 +143,42 @@ def root(period: str = Query(default=DEFAULT_CHART_PERIOD)):
             period_days,
             period_label,
         )
-        product_link = (
-            f'<a class="product-link" href="{escape(item["url"], quote=True)}" '
-            f'target="_blank" rel="noreferrer">{escape(item["name"])}</a>'
-        )
+        detail_url = f"/products/{item['id']}/view?period={period_key}"
+        product_name = escape(item["name"])
 
-        rows.append(
+        product_cards.append(
             f"""
-            <tr>
-                <td>{product_link}</td>
-                <td>{latest_price}</td>
-                <td>{target_price}</td>
-                <td>{lowest_price}</td>
-                <td>{price_chart}</td>
-                <td>{escape(checked_at)}</td>
-                <td><span class="status {target_class}">{target_status}</span></td>
-            </tr>
+            <article class="product-card">
+                <div class="product-cell product-name">
+                    <span class="cell-label">상품</span>
+                    <strong class="product-title">{product_name}</strong>
+                    <a class="detail-link" href="{detail_url}">상세 페이지</a>
+                </div>
+                <div class="product-cell">
+                    <span class="cell-label">현재 가격</span>
+                    <strong class="price-value">{latest_price}</strong>
+                </div>
+                <div class="product-cell">
+                    <span class="cell-label">역대 최저가</span>
+                    <strong class="price-value">{lowest_price}</strong>
+                </div>
+                <div class="product-cell target-cell">
+                    <span class="cell-label">이 가격엔 사야돼!</span>
+                    <strong class="price-value">{target_price}</strong>
+                    <span class="status {target_class}">{target_status}</span>
+                </div>
+                <div class="product-cell chart-cell">
+                    <span class="cell-label">가격 그래프</span>
+                    {price_chart}
+                </div>
+            </article>
             """
         )
 
-    table_rows = "\n".join(rows)
-    dashboard_metrics = build_dashboard_metrics(summaries, period_label)
+    product_list = "\n".join(product_cards)
+
+    if not product_list:
+        product_list = '<div class="empty">아직 등록된 상품이 없습니다.</div>'
 
     return f"""
     <!doctype html>
@@ -96,19 +186,21 @@ def root(period: str = Query(default=DEFAULT_CHART_PERIOD)):
     <head>
         <meta charset="utf-8">
         <meta name="viewport" content="width=device-width, initial-scale=1">
-        <title>SSD Price Tracker</title>
+        <title>지금 사면 될까?</title>
         <style>
+            {FONT_FACE_CSS}
+
             body {{
                 margin: 0;
-                font-family: Arial, sans-serif;
-                background: #f5f7fb;
-                color: #172033;
+                font-family: 'Paperlogy', Arial, sans-serif;
+                background: #f6f7f2;
+                color: #1f2a2a;
             }}
 
             main {{
-                max-width: 1180px;
+                max-width: 1220px;
                 margin: 0 auto;
-                padding: 32px 20px;
+                padding: 38px 20px 24px;
             }}
 
             header {{
@@ -116,85 +208,40 @@ def root(period: str = Query(default=DEFAULT_CHART_PERIOD)):
                 align-items: start;
                 justify-content: space-between;
                 gap: 16px;
-                margin-bottom: 20px;
+                margin-bottom: 22px;
             }}
 
             h1 {{
                 margin: 0;
-                font-size: 28px;
-                font-weight: 700;
-            }}
-
-            .subtitle {{
-                margin: 6px 0 0;
-                color: #65728a;
-                font-size: 14px;
+                font-size: 34px;
+                font-weight: 800;
             }}
 
             a {{
-                color: #2458d3;
+                color: #1967b3;
                 text-decoration: none;
                 font-weight: 600;
             }}
 
-            .actions {{
+            .header-action {{
                 display: flex;
                 align-items: center;
-                gap: 12px;
-                flex-wrap: wrap;
             }}
 
             button {{
                 cursor: pointer;
                 border: 0;
                 border-radius: 6px;
-                background: #2458d3;
+                background: #176b55;
                 color: white;
-                padding: 9px 14px;
+                padding: 10px 16px;
                 font: inherit;
                 font-size: 14px;
                 font-weight: 700;
             }}
 
             button:hover {{
-                background: #1d48ad;
-            }}
-
-            .metrics {{
-                display: grid;
-                grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
-                gap: 12px;
-                margin-bottom: 16px;
-            }}
-
-            .metric {{
-                border: 1px solid #dfe5f0;
-                border-radius: 6px;
-                background: white;
-                padding: 12px 14px;
-            }}
-
-            .metric-label {{
-                display: block;
-                margin-bottom: 6px;
-                color: #6a768d;
-                font-size: 12px;
-                font-weight: 700;
-                text-transform: uppercase;
-            }}
-
-            .metric-value {{
-                display: block;
-                color: #172033;
-                font-size: 18px;
-                font-weight: 800;
-            }}
-
-            .metric-sub {{
-                display: block;
-                margin-top: 4px;
-                color: #7a869a;
-                font-size: 12px;
+                background: #125642;
             }}
 
             .period-bar {{
@@ -202,11 +249,11 @@ def root(period: str = Query(default=DEFAULT_CHART_PERIOD)):
                 align-items: center;
                 justify-content: space-between;
                 gap: 12px;
-                margin: 0 0 16px;
+                margin: 0 0 14px;
             }}
 
             .period-label {{
-                color: #46556f;
+                color: #52605b;
                 font-size: 13px;
                 font-weight: 800;
             }}
@@ -219,62 +266,97 @@ def root(period: str = Query(default=DEFAULT_CHART_PERIOD)):
             }}
 
             .period-tab {{
-                border: 1px solid #cfd7e6;
+                border: 1px solid #cbd8d0;
                 border-radius: 6px;
                 background: white;
-                color: #46556f;
+                color: #52605b;
                 padding: 7px 10px;
                 font-size: 13px;
                 font-weight: 800;
             }}
 
             .period-tab.active {{
-                border-color: #2458d3;
-                background: #eaf1ff;
-                color: #2458d3;
+                border-color: #176b55;
+                background: #e7f3ee;
+                color: #176b55;
             }}
 
-            table {{
-                width: 100%;
-                border-collapse: collapse;
+            .product-list {{
+                display: grid;
+                gap: 12px;
+            }}
+
+            .product-card {{
+                display: grid;
+                grid-template-columns: minmax(190px, 1.3fr) minmax(110px, 0.75fr) minmax(120px, 0.8fr) minmax(150px, 0.95fr) minmax(300px, 1.9fr);
+                gap: 14px;
+                align-items: center;
+                border: 1px solid #d9e1db;
+                border-radius: 8px;
                 background: white;
-                border: 1px solid #dfe5f0;
+                padding: 16px;
             }}
 
-            th,
-            td {{
-                padding: 14px 16px;
-                border-bottom: 1px solid #e8edf5;
-                text-align: left;
-                font-size: 14px;
-                vertical-align: middle;
+            .product-cell {{
+                min-width: 0;
             }}
 
-            th {{
-                background: #eef3fb;
-                color: #46556f;
-                font-size: 13px;
+            .cell-label {{
+                display: block;
+                margin-bottom: 6px;
+                color: #68736f;
+                font-size: 12px;
+                font-weight: 800;
             }}
 
-            tr:last-child td {{
-                border-bottom: 0;
+            .product-title {{
+                display: block;
+                color: #1f2a2a;
+                font-size: 15px;
+                font-weight: 800;
+                overflow-wrap: anywhere;
             }}
 
-            .product-link {{
-                color: #172033;
+            .detail-link {{
+                display: inline-block;
+                margin-top: 8px;
+                border: 1px solid #cbd8d0;
+                border-radius: 6px;
+                background: #f7faf8;
+                color: #52605b;
+                padding: 5px 8px;
+                font-size: 12px;
+                font-weight: 800;
             }}
 
-            .product-link:hover {{
-                color: #2458d3;
+            .detail-link:hover {{
+                border-color: #176b55;
+                color: #176b55;
+            }}
+
+            .price-value {{
+                display: block;
+                color: #1f2a2a;
+                font-size: 16px;
+                font-weight: 800;
+                white-space: nowrap;
+            }}
+
+            .target-cell .status {{
+                margin-top: 7px;
+            }}
+
+            .chart-cell {{
+                min-width: 280px;
             }}
 
             .status {{
                 display: inline-block;
-                min-width: 72px;
+                min-width: 96px;
                 padding: 5px 8px;
                 border-radius: 6px;
                 text-align: center;
-                font-size: 13px;
+                font-size: 12px;
                 font-weight: 700;
             }}
 
@@ -313,7 +395,7 @@ def root(period: str = Query(default=DEFAULT_CHART_PERIOD)):
                 align-items: center;
                 justify-content: space-between;
                 gap: 12px;
-                color: #69768d;
+                color: #68736f;
                 font-size: 12px;
             }}
 
@@ -322,7 +404,7 @@ def root(period: str = Query(default=DEFAULT_CHART_PERIOD)):
             }}
 
             .trend-head strong {{
-                color: #172033;
+                color: #1f2a2a;
                 font-size: 13px;
             }}
 
@@ -338,14 +420,14 @@ def root(period: str = Query(default=DEFAULT_CHART_PERIOD)):
 
             .chart-line {{
                 fill: none;
-                stroke: #2458d3;
+                stroke: #1967b3;
                 stroke-linecap: round;
                 stroke-linejoin: round;
                 stroke-width: 2.8;
             }}
 
             .chart-area {{
-                fill: #eef3fb;
+                fill: #edf4f7;
             }}
 
             .chart-target {{
@@ -355,14 +437,14 @@ def root(period: str = Query(default=DEFAULT_CHART_PERIOD)):
             }}
 
             .chart-dot {{
-                fill: #2458d3;
+                fill: #1967b3;
                 stroke: white;
                 stroke-width: 2;
             }}
 
             .chart-point {{
                 fill: white;
-                stroke: #2458d3;
+                stroke: #1967b3;
                 stroke-width: 1.6;
             }}
 
@@ -375,7 +457,7 @@ def root(period: str = Query(default=DEFAULT_CHART_PERIOD)):
 
             .chart-hit:hover,
             .chart-hit:focus {{
-                fill: #2458d3;
+                fill: #1967b3;
                 opacity: 0.16;
             }}
 
@@ -383,9 +465,9 @@ def root(period: str = Query(default=DEFAULT_CHART_PERIOD)):
                 position: fixed;
                 z-index: 50;
                 max-width: 260px;
-                border: 1px solid #cfd7e6;
+                border: 1px solid #cbd8d0;
                 border-radius: 6px;
-                background: #172033;
+                background: #1f2a2a;
                 color: white;
                 opacity: 0;
                 padding: 8px 10px;
@@ -395,7 +477,7 @@ def root(period: str = Query(default=DEFAULT_CHART_PERIOD)):
                 font-size: 12px;
                 font-weight: 700;
                 line-height: 1.45;
-                box-shadow: 0 8px 20px rgba(23, 32, 51, 0.18);
+                box-shadow: 0 8px 20px rgba(31, 42, 42, 0.18);
             }}
 
             .chart-tooltip.visible {{
@@ -403,7 +485,26 @@ def root(period: str = Query(default=DEFAULT_CHART_PERIOD)):
             }}
 
             .muted {{
-                color: #7a869a;
+                color: #7a8580;
+            }}
+
+            .empty {{
+                border: 1px solid #d9e1db;
+                border-radius: 8px;
+                background: white;
+                color: #68736f;
+                padding: 18px;
+            }}
+
+            .footer-links {{
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                gap: 16px;
+                flex-wrap: wrap;
+                margin-top: 24px;
+                color: #68736f;
+                font-size: 13px;
             }}
 
             @media (max-width: 760px) {{
@@ -421,14 +522,12 @@ def root(period: str = Query(default=DEFAULT_CHART_PERIOD)):
                     flex-direction: column;
                 }}
 
-                table {{
-                    display: block;
-                    overflow-x: auto;
+                .product-card {{
+                    grid-template-columns: 1fr;
                 }}
 
-                th,
-                td {{
-                    white-space: nowrap;
+                .chart-cell {{
+                    min-width: 0;
                 }}
             }}
         </style>
@@ -437,45 +536,31 @@ def root(period: str = Query(default=DEFAULT_CHART_PERIOD)):
         <main>
             <header>
                 <div class="header-copy">
-                    <h1>SSD Price Tracker</h1>
-                    <p class="subtitle">Current prices, targets, and recent price changes.</p>
+                    <h1>지금 사면 될까?</h1>
                 </div>
-                <div class="actions">
+                <div class="header-action">
                     <form action="/check-now" method="post" onsubmit="return showChecking(this);">
-                        <button type="submit">Check Now</button>
+                        <button type="submit">가격 갱신</button>
                     </form>
-                    <a href="/manage">Manage</a>
-                    <a href="/ops">Ops</a>
-                    <a href="/docs">API Docs</a>
                 </div>
             </header>
-            {dashboard_metrics}
             <section class="period-bar" aria-label="Chart range">
-                <span class="period-label">Trend Range</span>
                 {period_tabs}
             </section>
-            <table>
-                <thead>
-                    <tr>
-                        <th>Product</th>
-                        <th>Latest</th>
-                        <th>Target</th>
-                        <th>Lowest</th>
-                        <th>Trend</th>
-                        <th>Updated</th>
-                        <th>Status</th>
-                    </tr>
-                </thead>
-                <tbody>
-                    {table_rows}
-                </tbody>
-            </table>
+            <section class="product-list" aria-label="SSD 가격 목록">
+                {product_list}
+            </section>
+            <footer class="footer-links">
+                <a href="/manage">상품 관리</a>
+                <a href="/ops">운영 화면</a>
+                <a href="/docs">API 문서</a>
+            </footer>
         </main>
         <script>
             function showChecking(form) {{
                 const button = form.querySelector("button");
                 button.disabled = true;
-                button.textContent = "Checking...";
+                button.textContent = "갱신 중...";
                 return true;
             }}
 
@@ -527,6 +612,403 @@ def root(period: str = Query(default=DEFAULT_CHART_PERIOD)):
     """
 
 
+@app.get("/products/{product_id}/view", response_class=HTMLResponse)
+def product_view(
+    product_id: int,
+    period: str = Query(default=DEFAULT_CHART_PERIOD),
+):
+    item = get_summary_item(product_id)
+
+    if item is None:
+        raise HTTPException(status_code=404, detail="상품을 찾을 수 없습니다.")
+
+    period_key, period_label, period_days = get_chart_period(period)
+    period_tabs = build_period_tabs(
+        period_key,
+        base_path=f"/products/{product_id}/view",
+    )
+    price_chart = build_price_chart(
+        item["id"],
+        item["target_price"],
+        period_days,
+        period_label,
+    )
+    latest_price = format_price(item["latest_price"])
+    target_price = format_price(item["target_price"])
+    lowest_price = format_price(item["lowest_price"])
+    updated_at = format_timestamp(
+        item["status_last_checked_at"] or item["latest_checked_at"]
+    )
+    target_status = "지금 살만해요" if item["is_target_reached"] else "조금 더 기다려요"
+    target_class = "reached" if item["is_target_reached"] else "watching"
+    product_url = escape(item["url"], quote=True)
+    recent_rows = build_recent_price_rows(item["id"])
+
+    return f"""
+    <!doctype html>
+    <html lang="ko">
+    <head>
+        <meta charset="utf-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1">
+        <title>{escape(item["name"])} - 지금 사면 될까?</title>
+        <style>
+            {FONT_FACE_CSS}
+
+            body {{
+                margin: 0;
+                font-family: 'Paperlogy', Arial, sans-serif;
+                background: #f6f7f2;
+                color: #1f2a2a;
+            }}
+
+            main {{
+                max-width: 1040px;
+                margin: 0 auto;
+                padding: 38px 20px 24px;
+            }}
+
+            header {{
+                display: flex;
+                align-items: start;
+                justify-content: space-between;
+                gap: 16px;
+                margin-bottom: 22px;
+            }}
+
+            h1,
+            h2 {{
+                margin: 0;
+            }}
+
+            h1 {{
+                font-size: 30px;
+                font-weight: 800;
+            }}
+
+            h2 {{
+                margin: 26px 0 12px;
+                font-size: 18px;
+                font-weight: 800;
+            }}
+
+            a {{
+                color: #1967b3;
+                text-decoration: none;
+                font-weight: 700;
+            }}
+
+            .summary-grid {{
+                display: grid;
+                grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+                gap: 12px;
+                margin-bottom: 18px;
+            }}
+
+            .summary-box,
+            .chart-box,
+            table {{
+                border: 1px solid #d9e1db;
+                border-radius: 8px;
+                background: white;
+            }}
+
+            .summary-box {{
+                padding: 14px;
+            }}
+
+            .box-label {{
+                display: block;
+                margin-bottom: 7px;
+                color: #68736f;
+                font-size: 12px;
+                font-weight: 800;
+            }}
+
+            .box-value {{
+                display: block;
+                color: #1f2a2a;
+                font-size: 18px;
+                font-weight: 800;
+            }}
+
+            .status {{
+                display: inline-block;
+                margin-top: 8px;
+                min-width: 96px;
+                padding: 5px 8px;
+                border-radius: 6px;
+                text-align: center;
+                font-size: 12px;
+                font-weight: 700;
+            }}
+
+            .reached {{
+                background: #dff7e8;
+                color: #176b37;
+            }}
+
+            .watching {{
+                background: #fff1d6;
+                color: #835300;
+            }}
+
+            .period-bar {{
+                display: flex;
+                align-items: center;
+                justify-content: space-between;
+                gap: 12px;
+                margin: 0 0 12px;
+            }}
+
+            .period-label {{
+                color: #52605b;
+                font-size: 13px;
+                font-weight: 800;
+            }}
+
+            .period-tabs {{
+                display: flex;
+                align-items: center;
+                gap: 8px;
+                flex-wrap: wrap;
+            }}
+
+            .period-tab {{
+                border: 1px solid #cbd8d0;
+                border-radius: 6px;
+                background: white;
+                color: #52605b;
+                padding: 7px 10px;
+                font-size: 13px;
+                font-weight: 800;
+            }}
+
+            .period-tab.active {{
+                border-color: #176b55;
+                background: #e7f3ee;
+                color: #176b55;
+            }}
+
+            .chart-box {{
+                padding: 16px;
+            }}
+
+            .trend-panel {{
+                min-width: 280px;
+            }}
+
+            .trend-head,
+            .trend-scale {{
+                display: flex;
+                align-items: center;
+                justify-content: space-between;
+                gap: 12px;
+                color: #68736f;
+                font-size: 12px;
+            }}
+
+            .trend-head {{
+                margin-bottom: 5px;
+            }}
+
+            .trend-head strong {{
+                color: #1f2a2a;
+                font-size: 13px;
+            }}
+
+            .trend-scale {{
+                margin-top: 4px;
+            }}
+
+            .chart {{
+                display: block;
+                width: 100%;
+                height: 180px;
+            }}
+
+            .chart-line {{
+                fill: none;
+                stroke: #1967b3;
+                stroke-linecap: round;
+                stroke-linejoin: round;
+                stroke-width: 2.8;
+            }}
+
+            .chart-area {{
+                fill: #edf4f7;
+            }}
+
+            .chart-target {{
+                stroke: #d78a00;
+                stroke-dasharray: 5 5;
+                stroke-width: 1.5;
+            }}
+
+            .chart-dot {{
+                fill: #1967b3;
+                stroke: white;
+                stroke-width: 2;
+            }}
+
+            .chart-point {{
+                fill: white;
+                stroke: #1967b3;
+                stroke-width: 1.6;
+            }}
+
+            .chart-hit {{
+                cursor: pointer;
+                fill: transparent;
+                outline: none;
+                stroke: transparent;
+            }}
+
+            .chart-hit:hover,
+            .chart-hit:focus {{
+                fill: #1967b3;
+                opacity: 0.16;
+            }}
+
+            table {{
+                width: 100%;
+                border-collapse: collapse;
+                overflow: hidden;
+            }}
+
+            th,
+            td {{
+                padding: 12px 14px;
+                border-bottom: 1px solid #e7ece8;
+                text-align: left;
+                font-size: 13px;
+            }}
+
+            th {{
+                background: #edf4f0;
+                color: #52605b;
+            }}
+
+            tr:last-child td {{
+                border-bottom: 0;
+            }}
+
+            .chart-tooltip {{
+                position: fixed;
+                z-index: 50;
+                max-width: 260px;
+                border: 1px solid #cbd8d0;
+                border-radius: 6px;
+                background: #1f2a2a;
+                color: white;
+                opacity: 0;
+                padding: 8px 10px;
+                pointer-events: none;
+                transform: translate(12px, 12px);
+                transition: opacity 120ms ease;
+                font-size: 12px;
+                font-weight: 700;
+                line-height: 1.45;
+                box-shadow: 0 8px 20px rgba(31, 42, 42, 0.18);
+            }}
+
+            .chart-tooltip.visible {{
+                opacity: 1;
+            }}
+
+            .footer-links {{
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                gap: 16px;
+                flex-wrap: wrap;
+                margin-top: 24px;
+                color: #68736f;
+                font-size: 13px;
+            }}
+
+            .muted {{
+                color: #7a8580;
+            }}
+
+            @media (max-width: 760px) {{
+                main {{
+                    padding: 20px 12px;
+                }}
+
+                header,
+                .period-bar {{
+                    align-items: start;
+                    flex-direction: column;
+                }}
+
+                table {{
+                    display: block;
+                    overflow-x: auto;
+                }}
+            }}
+        </style>
+    </head>
+    <body>
+        <main>
+            <header>
+                <div>
+                    <h1>{escape(item["name"])}</h1>
+                </div>
+                <a href="/">목록으로</a>
+            </header>
+            <section class="summary-grid" aria-label="상품 요약">
+                <div class="summary-box">
+                    <span class="box-label">현재 가격</span>
+                    <span class="box-value">{latest_price}</span>
+                </div>
+                <div class="summary-box">
+                    <span class="box-label">역대 최저가</span>
+                    <span class="box-value">{lowest_price}</span>
+                </div>
+                <div class="summary-box">
+                    <span class="box-label">이 가격엔 사야돼!</span>
+                    <span class="box-value">{target_price}</span>
+                    <span class="status {target_class}">{target_status}</span>
+                </div>
+                <div class="summary-box">
+                    <span class="box-label">최근 업데이트</span>
+                    <span class="box-value">{escape(updated_at)}</span>
+                </div>
+            </section>
+            <section class="summary-grid" aria-label="상품 링크">
+                <div class="summary-box">
+                    <span class="box-label">상품 링크</span>
+                    <a href="{product_url}" target="_blank" rel="noreferrer">상품 페이지 열기</a>
+                </div>
+            </section>
+            <section class="period-bar" aria-label="그래프 기간">
+                {period_tabs}
+            </section>
+            <section class="chart-box">
+                {price_chart}
+            </section>
+            <h2>최근 가격 기록</h2>
+            <table>
+                <thead>
+                    <tr>
+                        <th>확인 시각</th>
+                        <th>가격</th>
+                    </tr>
+                </thead>
+                <tbody>{recent_rows}</tbody>
+            </table>
+            <footer class="footer-links">
+                <a href="/manage">상품 관리</a>
+                <a href="/ops">운영 화면</a>
+                <a href="/docs">API 문서</a>
+            </footer>
+        </main>
+        {build_chart_tooltip_script()}
+    </body>
+    </html>
+    """
+
+
 @app.get("/ops", response_class=HTMLResponse)
 def ops():
     summaries = get_price_summary()
@@ -544,11 +1026,13 @@ def ops():
     <head>
         <meta charset="utf-8">
         <meta name="viewport" content="width=device-width, initial-scale=1">
-        <title>SSD Price Tracker Ops</title>
+        <title>운영 화면</title>
         <style>
+            {FONT_FACE_CSS}
+
             body {{
                 margin: 0;
-                font-family: Arial, sans-serif;
+                font-family: 'Paperlogy', Arial, sans-serif;
                 background: #f5f7fb;
                 color: #172033;
             }}
@@ -733,60 +1217,59 @@ def ops():
         <main>
             <header>
                 <div>
-                    <h1>Operations</h1>
-                    <p class="subtitle">Automation runs, crawler health, and alert history.</p>
+                    <h1>운영 화면</h1>
+                    <p class="subtitle">자동 실행, 수집 상태, 알림 이력을 확인합니다.</p>
                 </div>
                 <div class="actions">
-                    <a href="/">Dashboard</a>
-                    <a href="/manage">Manage</a>
-                    <a href="/docs">API Docs</a>
+                    <a href="/">대시보드</a>
+                    <a href="/manage">상품 관리</a>
+                    <a href="/docs">API 문서</a>
                 </div>
             </header>
             <p class="note">
-                Health means crawler status: Pending has no product check yet,
-                Healthy means the latest product check succeeded, and Failing
-                means the latest product check failed or has consecutive failures.
+                수집 상태는 상품별 크롤링 결과입니다. 대기는 아직 기록이 없다는 뜻이고,
+                정상은 최근 수집 성공, 실패 중은 최근 수집 실패 또는 연속 실패가 있다는 뜻입니다.
             </p>
             {status_metrics}
-            <h2>Recent Runs</h2>
+            <h2>최근 실행</h2>
             <table>
                 <thead>
                     <tr>
                         <th>ID</th>
-                        <th>Status</th>
-                        <th>Started</th>
-                        <th>Finished</th>
-                        <th>Source</th>
-                        <th>Success</th>
-                        <th>Failures</th>
-                        <th>Message</th>
+                        <th>상태</th>
+                        <th>시작</th>
+                        <th>종료</th>
+                        <th>출처</th>
+                        <th>성공</th>
+                        <th>실패</th>
+                        <th>메시지</th>
                     </tr>
                 </thead>
                 <tbody>{run_rows}</tbody>
             </table>
-            <h2>Product Health</h2>
+            <h2>상품별 수집 상태</h2>
             <table>
                 <thead>
                     <tr>
-                        <th>Product</th>
-                        <th>Health</th>
-                        <th>Last Checked</th>
-                        <th>Last Success</th>
-                        <th>Last Failure</th>
-                        <th>Failures</th>
-                        <th>Last Error</th>
+                        <th>상품</th>
+                        <th>상태</th>
+                        <th>마지막 확인</th>
+                        <th>마지막 성공</th>
+                        <th>마지막 실패</th>
+                        <th>실패 횟수</th>
+                        <th>마지막 오류</th>
                     </tr>
                 </thead>
                 <tbody>{product_status_rows}</tbody>
             </table>
-            <h2>Alert Events</h2>
+            <h2>알림 이력</h2>
             <table>
                 <thead>
                     <tr>
-                        <th>Sent At</th>
-                        <th>Type</th>
-                        <th>Key</th>
-                        <th>Detail</th>
+                        <th>전송 시각</th>
+                        <th>종류</th>
+                        <th>키</th>
+                        <th>내용</th>
                     </tr>
                 </thead>
                 <tbody>{alert_rows}</tbody>
@@ -828,7 +1311,7 @@ async def edit_product(product_id: int, request: Request):
     existing_product = get_product(product_id)
 
     if existing_product is None:
-        raise HTTPException(status_code=404, detail="Product not found")
+        raise HTTPException(status_code=404, detail="상품을 찾을 수 없습니다.")
 
     form = await parse_product_form(request)
 
@@ -847,7 +1330,7 @@ async def edit_product(product_id: int, request: Request):
             product_with_same_name is not None
             and product_with_same_name["id"] != product_id
         ):
-            raise ValueError("Product name already exists.")
+            raise ValueError("이미 같은 이름의 상품이 있습니다.")
 
         update_product_in_config(
             existing_product["name"],
@@ -862,7 +1345,7 @@ async def edit_product(product_id: int, request: Request):
             product["url"],
             product["target_price"],
         ):
-            raise ValueError("Product was not updated.")
+            raise ValueError("상품이 수정되지 않았습니다.")
     except ValueError as error:
         return HTMLResponse(render_manage_page(str(error)), status_code=400)
 
@@ -874,7 +1357,7 @@ def delete_product(product_id: int):
     product = get_product(product_id)
 
     if product is None:
-        raise HTTPException(status_code=404, detail="Product not found")
+        raise HTTPException(status_code=404, detail="상품을 찾을 수 없습니다.")
 
     remove_product_from_config(product["name"])
     deactivate_product(product_id)
@@ -895,7 +1378,7 @@ def render_manage_page(error=None):
     )
 
     if not product_cards:
-        product_cards = '<div class="empty">No products are being tracked.</div>'
+        product_cards = '<div class="empty">추적 중인 상품이 없습니다.</div>'
 
     return f"""
     <!doctype html>
@@ -903,11 +1386,13 @@ def render_manage_page(error=None):
     <head>
         <meta charset="utf-8">
         <meta name="viewport" content="width=device-width, initial-scale=1">
-        <title>Manage Products</title>
+        <title>상품 관리</title>
         <style>
+            {FONT_FACE_CSS}
+
             body {{
                 margin: 0;
-                font-family: Arial, sans-serif;
+                font-family: 'Paperlogy', Arial, sans-serif;
                 background: #f5f7fb;
                 color: #172033;
             }}
@@ -1080,19 +1565,20 @@ def render_manage_page(error=None):
     <body>
         <main>
             <header>
-                <h1>Manage Products</h1>
+                <h1>상품 관리</h1>
                 <div class="actions">
-                    <a href="/">Dashboard</a>
-                    <a href="/docs">API Docs</a>
+                    <a href="/">대시보드</a>
+                    <a href="/ops">운영 화면</a>
+                    <a href="/docs">API 문서</a>
                 </div>
             </header>
             {error_html}
             <section class="panel">
-                <h2>Add Product</h2>
+                <h2>상품 추가</h2>
                 <form action="/manage/products" method="post">
                     <div class="grid">
                         <label>
-                            Name
+                            상품명
                             <input name="name" required>
                         </label>
                         <label>
@@ -1100,16 +1586,16 @@ def render_manage_page(error=None):
                             <input name="url" type="url" required>
                         </label>
                         <label>
-                            Target
+                            목표가
                             <input name="target_price" type="number" min="1" required>
                         </label>
                     </div>
                     <div class="form-actions">
-                        <button type="submit">Add</button>
+                        <button type="submit">추가</button>
                     </div>
                 </form>
             </section>
-            <h2 class="section-title">Tracked Products</h2>
+            <h2 class="section-title">추적 중인 상품</h2>
             <section class="product-list">
                 {product_cards}
             </section>
@@ -1130,7 +1616,7 @@ def build_product_form(product):
         <form action="/manage/products/{product_id}" method="post">
             <div class="grid">
                 <label>
-                    Name
+                    상품명
                     <input name="name" value="{name}" required>
                 </label>
                 <label>
@@ -1138,17 +1624,17 @@ def build_product_form(product):
                     <input name="url" type="url" value="{url}" required>
                 </label>
                 <label>
-                    Target
+                    목표가
                     <input name="target_price" type="number" min="1" value="{target_price}" required>
                 </label>
             </div>
             <div class="form-actions">
-                <button type="submit">Save</button>
+                <button type="submit">저장</button>
             </div>
         </form>
-        <form action="/manage/products/{product_id}/delete" method="post" onsubmit="return confirm('Remove this product from tracking?');">
+        <form action="/manage/products/{product_id}/delete" method="post" onsubmit="return confirm('이 상품을 추적 목록에서 삭제할까요?');">
             <div class="form-actions">
-                <button class="danger" type="submit">Delete</button>
+                <button class="danger" type="submit">삭제</button>
             </div>
         </form>
     </article>
@@ -1157,7 +1643,7 @@ def build_product_form(product):
 
 def build_run_rows(runs):
     if not runs:
-        return '<tr><td class="muted" colspan="8">No runs recorded.</td></tr>'
+        return '<tr><td class="muted" colspan="8">기록된 실행이 없습니다.</td></tr>'
 
     rows = []
 
@@ -1186,7 +1672,7 @@ def build_run_rows(runs):
 
 def build_product_status_rows(summaries):
     if not summaries:
-        return '<tr><td class="muted" colspan="7">No products recorded.</td></tr>'
+        return '<tr><td class="muted" colspan="7">기록된 상품이 없습니다.</td></tr>'
 
     rows = []
 
@@ -1212,17 +1698,17 @@ def build_product_status_rows(summaries):
 
 def get_product_health(item):
     if item["status_last_checked_at"] is None:
-        return "Pending", "pending"
+        return "대기", "pending"
 
     if item["consecutive_failures"]:
-        return "Failing", "failing"
+        return "실패 중", "failing"
 
-    return "Healthy", "healthy"
+    return "정상", "healthy"
 
 
 def build_alert_rows(alerts):
     if not alerts:
-        return '<tr><td class="muted" colspan="4">No alert events recorded.</td></tr>'
+        return '<tr><td class="muted" colspan="4">기록된 알림이 없습니다.</td></tr>'
 
     rows = []
 
@@ -1242,6 +1728,84 @@ def build_alert_rows(alerts):
     return "\n".join(rows)
 
 
+def get_summary_item(product_id):
+    for item in get_price_summary():
+        if item["id"] == product_id:
+            return item
+
+    return None
+
+
+def build_recent_price_rows(product_id):
+    records = list_price_records(product_id, limit=10)
+
+    if not records:
+        return '<tr><td class="muted" colspan="2">아직 가격 기록이 없습니다.</td></tr>'
+
+    rows = []
+
+    for record in records:
+        rows.append(
+            f"""
+            <tr>
+                <td>{escape(format_timestamp(record["checked_at"]))}</td>
+                <td>{format_price(record["price"])}</td>
+            </tr>
+            """
+        )
+
+    return "\n".join(rows)
+
+
+def build_chart_tooltip_script():
+    return """
+        <script>
+            const chartTooltip = document.createElement("div");
+            chartTooltip.className = "chart-tooltip";
+            document.body.appendChild(chartTooltip);
+
+            function moveChartTooltip(event) {
+                if (!("clientX" in event)) {
+                    return;
+                }
+
+                chartTooltip.style.left = `${event.clientX}px`;
+                chartTooltip.style.top = `${event.clientY}px`;
+            }
+
+            function moveChartTooltipToElement(element) {
+                const rect = element.getBoundingClientRect();
+                chartTooltip.style.left = `${rect.left + rect.width / 2}px`;
+                chartTooltip.style.top = `${rect.top + rect.height / 2}px`;
+            }
+
+            document.querySelectorAll(".chart-hit").forEach((point) => {
+                point.addEventListener("mouseenter", (event) => {
+                    chartTooltip.textContent = point.dataset.tooltip || "";
+                    chartTooltip.classList.add("visible");
+                    moveChartTooltip(event);
+                });
+
+                point.addEventListener("mousemove", moveChartTooltip);
+
+                point.addEventListener("mouseleave", () => {
+                    chartTooltip.classList.remove("visible");
+                });
+
+                point.addEventListener("focus", () => {
+                    chartTooltip.textContent = point.dataset.tooltip || "";
+                    chartTooltip.classList.add("visible");
+                    moveChartTooltipToElement(point);
+                });
+
+                point.addEventListener("blur", () => {
+                    chartTooltip.classList.remove("visible");
+                });
+            });
+        </script>
+    """
+
+
 def get_chart_period(period):
     if period not in CHART_PERIODS:
         period = DEFAULT_CHART_PERIOD
@@ -1250,54 +1814,18 @@ def get_chart_period(period):
     return period, label, days
 
 
-def build_period_tabs(active_period):
+def build_period_tabs(active_period, base_path="/"):
     links = []
 
     for period, (label, _days) in CHART_PERIODS.items():
         active_class = " active" if period == active_period else ""
         current = ' aria-current="page"' if period == active_period else ""
         links.append(
-            f'<a class="period-tab{active_class}" href="/?period={period}"'
+            f'<a class="period-tab{active_class}" href="{base_path}?period={period}"'
             f"{current}>{escape(label)}</a>"
         )
 
     return f'<nav class="period-tabs">{"".join(links)}</nav>'
-
-
-def build_dashboard_metrics(summaries, period_label):
-    product_count = len(summaries)
-    reached_count = sum(1 for item in summaries if item["is_target_reached"])
-    latest_timestamps = [
-        item["latest_checked_at"]
-        for item in summaries
-        if item["latest_checked_at"]
-    ]
-    latest_update = max(latest_timestamps) if latest_timestamps else None
-
-    return f"""
-    <section class="metrics" aria-label="Price summary">
-        <div class="metric">
-            <span class="metric-label">Products</span>
-            <span class="metric-value">{product_count}</span>
-            <span class="metric-sub">tracked SSDs</span>
-        </div>
-        <div class="metric">
-            <span class="metric-label">At Target</span>
-            <span class="metric-value">{reached_count}</span>
-            <span class="metric-sub">ready to consider</span>
-        </div>
-        <div class="metric">
-            <span class="metric-label">Last Updated</span>
-            <span class="metric-value">{escape(format_timestamp(latest_update))}</span>
-            <span class="metric-sub">latest price record</span>
-        </div>
-        <div class="metric">
-            <span class="metric-label">Range</span>
-            <span class="metric-value">{escape(period_label)}</span>
-            <span class="metric-sub">chart window</span>
-        </div>
-    </section>
-    """
 
 
 def build_status_metrics(latest_run, summaries):
@@ -1323,24 +1851,24 @@ def build_status_metrics(latest_run, summaries):
     return f"""
     <section class="metrics" aria-label="Tracker status">
         <div class="metric">
-            <span class="metric-label">Last Run</span>
+            <span class="metric-label">마지막 실행</span>
             <span class="metric-value">{escape(run_status)}</span>
             <span class="metric-sub">{escape(run_time)}</span>
         </div>
         <div class="metric">
-            <span class="metric-label">Success</span>
+            <span class="metric-label">성공</span>
             <span class="metric-value">{escape(run_counts)}</span>
-            <span class="metric-sub">successful checks</span>
+            <span class="metric-sub">성공한 상품 수</span>
         </div>
         <div class="metric">
-            <span class="metric-label">Failures</span>
+            <span class="metric-label">실패</span>
             <span class="metric-value">{escape(run_failures)}</span>
-            <span class="metric-sub">latest run</span>
+            <span class="metric-sub">최근 실행 기준</span>
         </div>
         <div class="metric">
-            <span class="metric-label">Products</span>
+            <span class="metric-label">상품</span>
             <span class="metric-value">{product_count}</span>
-            <span class="metric-sub">{failing_count} failing</span>
+            <span class="metric-sub">실패 중 {failing_count}개</span>
         </div>
     </section>
     """
@@ -1348,11 +1876,11 @@ def build_status_metrics(latest_run, summaries):
 
 def format_run_status(status):
     labels = {
-        "running": "Running",
-        "success": "Healthy",
-        "skipped": "Skipped",
-        "partial_failure": "Partial Failure",
-        "failed": "Failed",
+        "running": "실행 중",
+        "success": "정상",
+        "skipped": "건너뜀",
+        "partial_failure": "일부 실패",
+        "failed": "실패",
     }
     return labels.get(status, status or "-")
 
@@ -1367,14 +1895,14 @@ def format_price(price):
     if price is None:
         return "-"
 
-    return f"{price:,} KRW"
+    return f"{price:,}원"
 
 
 def format_timestamp(timestamp):
     if not timestamp:
         return "-"
 
-    return f"{timestamp} KST"
+    return f"{timestamp} 한국시간"
 
 
 def build_price_chart(product_id, target_price, period_days, period_label):
@@ -1386,7 +1914,7 @@ def build_price_chart(product_id, target_price, period_days, period_label):
     ordered_records = list(reversed(records))
 
     if not ordered_records:
-        return f'<span class="muted">No records in {escape(period_label)}</span>'
+        return f'<span class="muted">{escape(period_label)} 기록 없음</span>'
 
     display_records, change_record_ids, change_count = select_price_change_records(
         ordered_records
@@ -1463,16 +1991,16 @@ def build_price_chart(product_id, target_price, period_days, period_label):
         for x, y, record in chart_points
     )
     label = escape(
-        f"Price changes over {period_label}. Current {latest_price:,} KRW. "
-        f"Low {min_price:,} KRW. High {max_price:,} KRW. "
-        f"Target {target_price:,} KRW."
+        f"{period_label} 가격 변화. 현재 {latest_price:,}원. "
+        f"최저 {min_price:,}원. 최고 {max_price:,}원. "
+        f"목표 {target_price:,}원."
     )
 
     return f"""
     <div class="trend-panel">
         <div class="trend-head">
-            <span><strong>{change_count}</strong> changes</span>
-            <span>Target {format_price(target_price)}</span>
+            <span><strong>{change_count}</strong>번 변동</span>
+            <span>목표 {format_price(target_price)}</span>
         </div>
         <svg class="chart" viewBox="0 0 {width} {height}" role="img" aria-label="{label}">
             <polygon class="chart-area" points="{area_points}"></polygon>
@@ -1483,8 +2011,8 @@ def build_price_chart(product_id, target_price, period_days, period_label):
             {hover_points}
         </svg>
         <div class="trend-scale">
-            <span>Low {format_price(min_price)}</span>
-            <span>High {format_price(max_price)}</span>
+            <span>최저 {format_price(min_price)}</span>
+            <span>최고 {format_price(max_price)}</span>
         </div>
     </div>
     """
@@ -1577,7 +2105,7 @@ def product_detail(product_id: int):
     product = get_product(product_id)
 
     if product is None:
-        raise HTTPException(status_code=404, detail="Product not found")
+        raise HTTPException(status_code=404, detail="상품을 찾을 수 없습니다.")
 
     return product
 
@@ -1591,7 +2119,7 @@ def product_prices(
     product = get_product(product_id)
 
     if product is None:
-        raise HTTPException(status_code=404, detail="Product not found")
+        raise HTTPException(status_code=404, detail="상품을 찾을 수 없습니다.")
 
     if days > 0:
         return list_price_records_for_period(product_id, days, limit)
