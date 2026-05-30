@@ -1,19 +1,19 @@
-name: Price check
+name: Price check watchdog
 
 on:
   schedule:
-    - cron: "17,47 * * * *"
+    - cron: "7 * * * *"
   workflow_dispatch:
 
 permissions:
   contents: read
 
 concurrency:
-  group: price-check-${{ github.ref }}
+  group: price-watchdog-${{ github.ref }}
   cancel-in-progress: false
 
 jobs:
-  check-prices:
+  watchdog:
     runs-on: ubuntu-latest
 
     steps:
@@ -55,13 +55,11 @@ jobs:
             exit 1
           fi
 
-      - name: Run price check
+      - name: Run watchdog
         env:
           DATABASE_BACKEND: turso
           TURSO_DATABASE_URL: ${{ secrets.TURSO_DATABASE_URL }}
           TURSO_AUTH_TOKEN: ${{ secrets.TURSO_AUTH_TOKEN }}
           DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
-          CHECK_RUN_SOURCE: github-actions-price-check
-          MIN_CHECK_INTERVAL_MINUTES: ${{ github.event_name == 'schedule' && '50' || '0' }}
-          REQUEST_DELAY_SECONDS: "3"
-        run: python main.py --once
+          CHECK_RUN_SOURCE: github-actions-watchdog
+        run: python main.py --watchdog

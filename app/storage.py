@@ -144,12 +144,20 @@ def initialize_database():
                 started_at TEXT NOT NULL,
                 finished_at TEXT,
                 status TEXT NOT NULL,
+                source TEXT NOT NULL DEFAULT 'unknown',
                 checked_count INTEGER NOT NULL DEFAULT 0,
                 success_count INTEGER NOT NULL DEFAULT 0,
                 failure_count INTEGER NOT NULL DEFAULT 0,
                 error_message TEXT
             )
             """
+        )
+
+        ensure_column(
+            cursor,
+            "check_runs",
+            "source",
+            "TEXT NOT NULL DEFAULT 'unknown'",
         )
 
         cursor.execute(
@@ -164,6 +172,25 @@ def initialize_database():
                 updated_at TEXT NOT NULL,
                 FOREIGN KEY (product_id) REFERENCES products (id)
             )
+            """
+        )
+
+        cursor.execute(
+            """
+            CREATE TABLE IF NOT EXISTS alert_events (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                alert_type TEXT NOT NULL,
+                alert_key TEXT NOT NULL,
+                sent_at TEXT NOT NULL,
+                detail TEXT
+            )
+            """
+        )
+
+        cursor.execute(
+            """
+            CREATE INDEX IF NOT EXISTS idx_alert_events_type_key_sent_at
+            ON alert_events (alert_type, alert_key, sent_at)
             """
         )
 
@@ -408,6 +435,25 @@ def list_price_records(product_id, limit=30):
         return rows_to_dicts(cursor, cursor.fetchall())
 
 
+def list_price_records_for_period(product_id, days, limit=6000):
+    initialize_database()
+    cutoff = (current_datetime() - timedelta(days=days)).strftime(TIMESTAMP_FORMAT)
+
+    with get_connection() as connection:
+        cursor = connection.cursor()
+        cursor.execute(
+            """
+            SELECT id, product_id, price, checked_at
+            FROM price_records
+            WHERE product_id = ? AND checked_at >= ?
+            ORDER BY checked_at DESC, id DESC
+            LIMIT ?
+            """,
+            (product_id, cutoff, limit),
+        )
+        return rows_to_dicts(cursor, cursor.fetchall())
+
+
 def get_price_summary():
     initialize_database()
 
@@ -461,17 +507,39 @@ def get_price_summary():
     return summaries
 
 
-def start_check_run():
+def start_check_run(source="unknown"):
     now = current_timestamp()
 
     with get_connection() as connection:
         cursor = connection.cursor()
         cursor.execute(
             """
-            INSERT INTO check_runs (started_at, status)
-            VALUES (?, ?)
+            INSERT INTO check_runs (started_at, status, source)
+            VALUES (?, ?, ?)
             """,
-            (now, "running"),
+            (now, "running", source),
+        )
+        connection.commit()
+        return cursor.lastrowid
+
+
+def record_skipped_check_run(source, reason):
+    now = current_timestamp()
+
+    with get_connection() as connection:
+        cursor = connection.cursor()
+        cursor.execute(
+            """
+            INSERT INTO check_runs (
+                started_at,
+                finished_at,
+                status,
+                source,
+                error_message
+            )
+            VALUES (?, ?, ?, ?, ?)
+            """,
+            (now, now, "skipped", source, reason),
         )
         connection.commit()
         return cursor.lastrowid
@@ -599,6 +667,7 @@ def get_latest_check_run():
                 started_at,
                 finished_at,
                 status,
+                source,
                 checked_count,
                 success_count,
                 failure_count,
@@ -618,11 +687,115 @@ def get_latest_check_run():
         "started_at": row[1],
         "finished_at": row[2],
         "status": row[3],
-        "checked_count": row[4],
-        "success_count": row[5],
-        "failure_count": row[6],
-        "error_message": row[7],
+        "source": row[4],
+        "checked_count": row[5],
+        "success_count": row[6],
+        "failure_count": row[7],
+        "error_message": row[8],
     }
+
+
+def list_check_runs(limit=10):
+    initialize_database()
+
+    with get_connection() as connection:
+        cursor = connection.cursor()
+        cursor.execute(
+            """
+            SELECT
+                id,
+                started_at,
+                finished_at,
+                status,
+                source,
+                checked_count,
+                success_count,
+                failure_count,
+                error_message
+            FROM check_runs
+            ORDER BY started_at DESC, id DESC
+            LIMIT ?
+            """,
+            (limit,),
+        )
+        rows = cursor.fetchall()
+
+    return [
+        {
+            "id": row[0],
+            "started_at": row[1],
+            "finished_at": row[2],
+            "status": row[3],
+            "source": row[4],
+            "checked_count": row[5],
+            "success_count": row[6],
+            "failure_count": row[7],
+            "error_message": row[8],
+        }
+        for row in rows
+    ]
+
+
+def get_latest_successful_check_run():
+    initialize_database()
+
+    with get_connection() as connection:
+        cursor = connection.cursor()
+        cursor.execute(
+            """
+            SELECT
+                id,
+                started_at,
+                finished_at,
+                status,
+                source,
+                checked_count,
+                success_count,
+                failure_count,
+                error_message
+            FROM check_runs
+            WHERE status = ?
+            ORDER BY COALESCE(finished_at, started_at) DESC, id DESC
+            LIMIT 1
+            """,
+            ("success",),
+        )
+        row = cursor.fetchone()
+
+    if row is None:
+        return None
+
+    return {
+        "id": row[0],
+        "started_at": row[1],
+        "finished_at": row[2],
+        "status": row[3],
+        "source": row[4],
+        "checked_count": row[5],
+        "success_count": row[6],
+        "failure_count": row[7],
+        "error_message": row[8],
+    }
+
+
+def parse_timestamp(timestamp):
+    if not timestamp:
+        return None
+
+    try:
+        return datetime.strptime(timestamp, TIMESTAMP_FORMAT).replace(tzinfo=KST)
+    except ValueError:
+        return None
+
+
+def minutes_since_timestamp(timestamp):
+    parsed_timestamp = parse_timestamp(timestamp)
+
+    if parsed_timestamp is None:
+        return None
+
+    elapsed_seconds = (current_datetime() - parsed_timestamp).total_seconds()
+    return max(0, int(elapsed_seconds // 60))
 
 
 def get_recent_successful_check_run(within_minutes):
@@ -663,3 +836,85 @@ def get_recent_successful_check_run(within_minutes):
         "checked_count": row[3],
         "success_count": row[4],
     }
+
+
+def get_recent_alert_event(alert_type, alert_key, within_minutes):
+    if within_minutes <= 0:
+        return None
+
+    initialize_database()
+    cutoff = (current_datetime() - timedelta(minutes=within_minutes)).strftime(
+        TIMESTAMP_FORMAT
+    )
+
+    with get_connection() as connection:
+        cursor = connection.cursor()
+        cursor.execute(
+            """
+            SELECT id, alert_type, alert_key, sent_at, detail
+            FROM alert_events
+            WHERE alert_type = ? AND alert_key = ? AND sent_at >= ?
+            ORDER BY sent_at DESC, id DESC
+            LIMIT 1
+            """,
+            (alert_type, alert_key, cutoff),
+        )
+        row = cursor.fetchone()
+
+    if row is None:
+        return None
+
+    return {
+        "id": row[0],
+        "alert_type": row[1],
+        "alert_key": row[2],
+        "sent_at": row[3],
+        "detail": row[4],
+    }
+
+
+def list_alert_events(limit=10):
+    initialize_database()
+
+    with get_connection() as connection:
+        cursor = connection.cursor()
+        cursor.execute(
+            """
+            SELECT id, alert_type, alert_key, sent_at, detail
+            FROM alert_events
+            ORDER BY sent_at DESC, id DESC
+            LIMIT ?
+            """,
+            (limit,),
+        )
+        rows = cursor.fetchall()
+
+    return [
+        {
+            "id": row[0],
+            "alert_type": row[1],
+            "alert_key": row[2],
+            "sent_at": row[3],
+            "detail": row[4],
+        }
+        for row in rows
+    ]
+
+
+def record_alert_event(alert_type, alert_key, detail=None):
+    now = current_timestamp()
+
+    if detail is not None:
+        detail = str(detail)[:1000]
+
+    with get_connection() as connection:
+        cursor = connection.cursor()
+        cursor.execute(
+            """
+            INSERT INTO alert_events (alert_type, alert_key, sent_at, detail)
+            VALUES (?, ?, ?, ?)
+            """,
+            (alert_type, alert_key, now, detail),
+        )
+        connection.commit()
+        return cursor.lastrowid

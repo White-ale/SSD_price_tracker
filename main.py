@@ -19,6 +19,11 @@ def parse_args():
         action="store_true",
         help="Run the FastAPI server.",
     )
+    mode_group.add_argument(
+        "--watchdog",
+        action="store_true",
+        help="Check whether recent price checks are missing and send an alert.",
+    )
     parser.add_argument(
         "--reload",
         action="store_true",
@@ -34,6 +39,12 @@ def main():
         from app.scheduler import run_once
 
         run_once()
+        return
+
+    if args.watchdog:
+        from app.scheduler import run_watchdog
+
+        run_watchdog()
         return
 
     if args.api:

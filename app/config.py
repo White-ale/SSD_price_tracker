@@ -48,6 +48,24 @@ CHECK_INTERVAL_SECONDS = get_int_env("CHECK_INTERVAL_SECONDS", 60 * 60)
 REQUEST_DELAY_SECONDS = get_int_env("REQUEST_DELAY_SECONDS", 3)
 MIN_CHECK_INTERVAL_MINUTES = get_int_env("MIN_CHECK_INTERVAL_MINUTES", 0)
 FAILURE_ALERT_THRESHOLD = get_int_env("FAILURE_ALERT_THRESHOLD", 3)
+MISSING_RUN_ALERT_AFTER_MINUTES = get_int_env(
+    "MISSING_RUN_ALERT_AFTER_MINUTES",
+    180,
+)
+MISSING_RUN_ALERT_COOLDOWN_MINUTES = get_int_env(
+    "MISSING_RUN_ALERT_COOLDOWN_MINUTES",
+    360,
+)
+
+
+def get_default_check_run_source():
+    if get_text_env("GITHUB_ACTIONS").lower() == "true":
+        return "github-actions"
+
+    return "local"
+
+
+CHECK_RUN_SOURCE = get_text_env("CHECK_RUN_SOURCE", get_default_check_run_source())
 API_HOST = get_text_env("API_HOST", "127.0.0.1")
 API_PORT = get_int_env("API_PORT", 8000)
 DISCORD_WEBHOOK_URL = get_text_env("DISCORD_WEBHOOK_URL")

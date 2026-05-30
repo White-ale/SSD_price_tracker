@@ -14,18 +14,30 @@ from app.product_source import seed_products_from_config_if_empty
 from app.scheduler import run_once
 from app.storage import (
     deactivate_product,
+    list_alert_events,
+    list_check_runs,
     get_latest_check_run,
     get_price_summary,
     get_product,
     get_product_by_name,
     initialize_database,
     list_price_records,
+    list_price_records_for_period,
     list_products,
     update_product,
     upsert_product,
 )
 
 app = FastAPI(title="SSD Price Tracker API")
+
+CHART_PERIODS = {
+    "7d": ("7일", 7),
+    "30d": ("1개월", 30),
+    "90d": ("3개월", 90),
+    "180d": ("6개월", 180),
+}
+DEFAULT_CHART_PERIOD = "30d"
+MAX_CHART_RECORDS = 6000
 
 
 @app.on_event("startup")
@@ -35,10 +47,11 @@ def startup():
 
 
 @app.get("/", response_class=HTMLResponse)
-def root():
+def root(period: str = Query(default=DEFAULT_CHART_PERIOD)):
     rows = []
     summaries = get_price_summary()
-    latest_run = get_latest_check_run()
+    period_key, period_label, period_days = get_chart_period(period)
+    period_tabs = build_period_tabs(period_key)
 
     for item in summaries:
         latest_price = format_price(item["latest_price"])
@@ -47,42 +60,35 @@ def root():
         checked_at = format_timestamp(
             item["status_last_checked_at"] or item["latest_checked_at"]
         )
-        target_status = "Reached" if item["is_target_reached"] else "Watching"
+        target_status = "At Target" if item["is_target_reached"] else "Watching"
         target_class = "reached" if item["is_target_reached"] else "watching"
-        failure_count = item["consecutive_failures"]
-        if item["status_last_checked_at"] is None:
-            health_status = "Pending"
-            health_class = "pending"
-        elif failure_count:
-            health_status = "Failing"
-            health_class = "failing"
-        else:
-            health_status = "Healthy"
-            health_class = "healthy"
-        last_error = item["last_error"] or ""
-        health_title = (
-            f' title="{escape(last_error)}"' if last_error else ""
+        price_chart = build_price_chart(
+            item["id"],
+            item["target_price"],
+            period_days,
+            period_label,
         )
-        price_chart = build_price_chart(item["id"], item["target_price"])
+        product_link = (
+            f'<a class="product-link" href="{escape(item["url"], quote=True)}" '
+            f'target="_blank" rel="noreferrer">{escape(item["name"])}</a>'
+        )
 
         rows.append(
             f"""
             <tr>
-                <td>{escape(item["name"])}</td>
+                <td>{product_link}</td>
                 <td>{latest_price}</td>
                 <td>{target_price}</td>
                 <td>{lowest_price}</td>
                 <td>{price_chart}</td>
                 <td>{escape(checked_at)}</td>
-                <td>{failure_count}</td>
-                <td><span class="status {health_class}"{health_title}>{health_status}</span></td>
                 <td><span class="status {target_class}">{target_status}</span></td>
             </tr>
             """
         )
 
     table_rows = "\n".join(rows)
-    status_metrics = build_status_metrics(latest_run, summaries)
+    dashboard_metrics = build_dashboard_metrics(summaries, period_label)
 
     return f"""
     <!doctype html>
@@ -100,14 +106,14 @@ def root():
             }}
 
             main {{
-                max-width: 1100px;
+                max-width: 1180px;
                 margin: 0 auto;
                 padding: 32px 20px;
             }}
 
             header {{
                 display: flex;
-                align-items: end;
+                align-items: start;
                 justify-content: space-between;
                 gap: 16px;
                 margin-bottom: 20px;
@@ -117,6 +123,12 @@ def root():
                 margin: 0;
                 font-size: 28px;
                 font-weight: 700;
+            }}
+
+            .subtitle {{
+                margin: 6px 0 0;
+                color: #65728a;
+                font-size: 14px;
             }}
 
             a {{
@@ -129,6 +141,7 @@ def root():
                 display: flex;
                 align-items: center;
                 gap: 12px;
+                flex-wrap: wrap;
             }}
 
             button {{
@@ -184,6 +197,43 @@ def root():
                 font-size: 12px;
             }}
 
+            .period-bar {{
+                display: flex;
+                align-items: center;
+                justify-content: space-between;
+                gap: 12px;
+                margin: 0 0 16px;
+            }}
+
+            .period-label {{
+                color: #46556f;
+                font-size: 13px;
+                font-weight: 800;
+            }}
+
+            .period-tabs {{
+                display: flex;
+                align-items: center;
+                gap: 8px;
+                flex-wrap: wrap;
+            }}
+
+            .period-tab {{
+                border: 1px solid #cfd7e6;
+                border-radius: 6px;
+                background: white;
+                color: #46556f;
+                padding: 7px 10px;
+                font-size: 13px;
+                font-weight: 800;
+            }}
+
+            .period-tab.active {{
+                border-color: #2458d3;
+                background: #eaf1ff;
+                color: #2458d3;
+            }}
+
             table {{
                 width: 100%;
                 border-collapse: collapse;
@@ -208,6 +258,14 @@ def root():
 
             tr:last-child td {{
                 border-bottom: 0;
+            }}
+
+            .product-link {{
+                color: #172033;
+            }}
+
+            .product-link:hover {{
+                color: #2458d3;
             }}
 
             .status {{
@@ -358,6 +416,11 @@ def root():
                     flex-direction: column;
                 }}
 
+                .period-bar {{
+                    align-items: start;
+                    flex-direction: column;
+                }}
+
                 table {{
                     display: block;
                     overflow-x: auto;
@@ -373,16 +436,24 @@ def root():
     <body>
         <main>
             <header>
-                <h1>SSD Price Tracker</h1>
+                <div class="header-copy">
+                    <h1>SSD Price Tracker</h1>
+                    <p class="subtitle">Current prices, targets, and recent price changes.</p>
+                </div>
                 <div class="actions">
                     <form action="/check-now" method="post" onsubmit="return showChecking(this);">
                         <button type="submit">Check Now</button>
                     </form>
                     <a href="/manage">Manage</a>
+                    <a href="/ops">Ops</a>
                     <a href="/docs">API Docs</a>
                 </div>
             </header>
-            {status_metrics}
+            {dashboard_metrics}
+            <section class="period-bar" aria-label="Chart range">
+                <span class="period-label">Trend Range</span>
+                {period_tabs}
+            </section>
             <table>
                 <thead>
                     <tr>
@@ -391,10 +462,8 @@ def root():
                         <th>Target</th>
                         <th>Lowest</th>
                         <th>Trend</th>
-                        <th>Checked At</th>
-                        <th>Failures</th>
-                        <th>Health</th>
-                        <th>Target</th>
+                        <th>Updated</th>
+                        <th>Status</th>
                     </tr>
                 </thead>
                 <tbody>
@@ -453,6 +522,276 @@ def root():
                 }});
             }});
         </script>
+    </body>
+    </html>
+    """
+
+
+@app.get("/ops", response_class=HTMLResponse)
+def ops():
+    summaries = get_price_summary()
+    latest_run = get_latest_check_run()
+    recent_runs = list_check_runs(limit=12)
+    recent_alerts = list_alert_events(limit=12)
+    status_metrics = build_status_metrics(latest_run, summaries)
+    run_rows = build_run_rows(recent_runs)
+    product_status_rows = build_product_status_rows(summaries)
+    alert_rows = build_alert_rows(recent_alerts)
+
+    return f"""
+    <!doctype html>
+    <html lang="ko">
+    <head>
+        <meta charset="utf-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1">
+        <title>SSD Price Tracker Ops</title>
+        <style>
+            body {{
+                margin: 0;
+                font-family: Arial, sans-serif;
+                background: #f5f7fb;
+                color: #172033;
+            }}
+
+            main {{
+                max-width: 1180px;
+                margin: 0 auto;
+                padding: 32px 20px;
+            }}
+
+            header {{
+                display: flex;
+                align-items: start;
+                justify-content: space-between;
+                gap: 16px;
+                margin-bottom: 20px;
+            }}
+
+            h1,
+            h2 {{
+                margin: 0;
+            }}
+
+            h1 {{
+                font-size: 28px;
+                font-weight: 700;
+            }}
+
+            h2 {{
+                margin: 26px 0 12px;
+                font-size: 18px;
+                font-weight: 800;
+            }}
+
+            .subtitle {{
+                margin: 6px 0 0;
+                color: #65728a;
+                font-size: 14px;
+            }}
+
+            a {{
+                color: #2458d3;
+                text-decoration: none;
+                font-weight: 600;
+            }}
+
+            .actions {{
+                display: flex;
+                align-items: center;
+                gap: 12px;
+                flex-wrap: wrap;
+            }}
+
+            .metrics {{
+                display: grid;
+                grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+                gap: 12px;
+                margin-bottom: 16px;
+            }}
+
+            .metric,
+            .note {{
+                border: 1px solid #dfe5f0;
+                border-radius: 6px;
+                background: white;
+                padding: 12px 14px;
+            }}
+
+            .metric-label {{
+                display: block;
+                margin-bottom: 6px;
+                color: #6a768d;
+                font-size: 12px;
+                font-weight: 700;
+                text-transform: uppercase;
+            }}
+
+            .metric-value {{
+                display: block;
+                color: #172033;
+                font-size: 18px;
+                font-weight: 800;
+            }}
+
+            .metric-sub,
+            .note {{
+                color: #7a869a;
+                font-size: 12px;
+            }}
+
+            table {{
+                width: 100%;
+                border-collapse: collapse;
+                background: white;
+                border: 1px solid #dfe5f0;
+            }}
+
+            th,
+            td {{
+                padding: 12px 14px;
+                border-bottom: 1px solid #e8edf5;
+                text-align: left;
+                font-size: 13px;
+                vertical-align: top;
+            }}
+
+            th {{
+                background: #eef3fb;
+                color: #46556f;
+            }}
+
+            tr:last-child td {{
+                border-bottom: 0;
+            }}
+
+            .status {{
+                display: inline-block;
+                min-width: 72px;
+                padding: 5px 8px;
+                border-radius: 6px;
+                text-align: center;
+                font-size: 12px;
+                font-weight: 700;
+            }}
+
+            .healthy,
+            .success {{
+                background: #e6f4ff;
+                color: #155b82;
+            }}
+
+            .skipped,
+            .pending {{
+                background: #edf0f5;
+                color: #5f6b7a;
+            }}
+
+            .failing,
+            .failed,
+            .partial_failure {{
+                background: #ffe5e5;
+                color: #9f1f1f;
+            }}
+
+            .running {{
+                background: #fff1d6;
+                color: #835300;
+            }}
+
+            .muted {{
+                color: #7a869a;
+            }}
+
+            .error-cell {{
+                max-width: 360px;
+                overflow-wrap: anywhere;
+            }}
+
+            @media (max-width: 760px) {{
+                main {{
+                    padding: 20px 12px;
+                }}
+
+                header {{
+                    align-items: start;
+                    flex-direction: column;
+                }}
+
+                table {{
+                    display: block;
+                    overflow-x: auto;
+                }}
+
+                th,
+                td {{
+                    white-space: nowrap;
+                }}
+            }}
+        </style>
+    </head>
+    <body>
+        <main>
+            <header>
+                <div>
+                    <h1>Operations</h1>
+                    <p class="subtitle">Automation runs, crawler health, and alert history.</p>
+                </div>
+                <div class="actions">
+                    <a href="/">Dashboard</a>
+                    <a href="/manage">Manage</a>
+                    <a href="/docs">API Docs</a>
+                </div>
+            </header>
+            <p class="note">
+                Health means crawler status: Pending has no product check yet,
+                Healthy means the latest product check succeeded, and Failing
+                means the latest product check failed or has consecutive failures.
+            </p>
+            {status_metrics}
+            <h2>Recent Runs</h2>
+            <table>
+                <thead>
+                    <tr>
+                        <th>ID</th>
+                        <th>Status</th>
+                        <th>Started</th>
+                        <th>Finished</th>
+                        <th>Source</th>
+                        <th>Success</th>
+                        <th>Failures</th>
+                        <th>Message</th>
+                    </tr>
+                </thead>
+                <tbody>{run_rows}</tbody>
+            </table>
+            <h2>Product Health</h2>
+            <table>
+                <thead>
+                    <tr>
+                        <th>Product</th>
+                        <th>Health</th>
+                        <th>Last Checked</th>
+                        <th>Last Success</th>
+                        <th>Last Failure</th>
+                        <th>Failures</th>
+                        <th>Last Error</th>
+                    </tr>
+                </thead>
+                <tbody>{product_status_rows}</tbody>
+            </table>
+            <h2>Alert Events</h2>
+            <table>
+                <thead>
+                    <tr>
+                        <th>Sent At</th>
+                        <th>Type</th>
+                        <th>Key</th>
+                        <th>Detail</th>
+                    </tr>
+                </thead>
+                <tbody>{alert_rows}</tbody>
+            </table>
+        </main>
     </body>
     </html>
     """
@@ -816,6 +1155,151 @@ def build_product_form(product):
     """
 
 
+def build_run_rows(runs):
+    if not runs:
+        return '<tr><td class="muted" colspan="8">No runs recorded.</td></tr>'
+
+    rows = []
+
+    for run in runs:
+        status = run["status"] or "unknown"
+        status_class = escape(status)
+        status_label = escape(format_run_status(status))
+        message = escape(run["error_message"] or "")
+        rows.append(
+            f"""
+            <tr>
+                <td>{run["id"]}</td>
+                <td><span class="status {status_class}">{status_label}</span></td>
+                <td>{escape(format_timestamp(run["started_at"]))}</td>
+                <td>{escape(format_timestamp(run["finished_at"]))}</td>
+                <td>{escape(run["source"] or "unknown")}</td>
+                <td>{run["success_count"]} / {run["checked_count"]}</td>
+                <td>{run["failure_count"]}</td>
+                <td class="error-cell">{message or '<span class="muted">-</span>'}</td>
+            </tr>
+            """
+        )
+
+    return "\n".join(rows)
+
+
+def build_product_status_rows(summaries):
+    if not summaries:
+        return '<tr><td class="muted" colspan="7">No products recorded.</td></tr>'
+
+    rows = []
+
+    for item in summaries:
+        health_status, health_class = get_product_health(item)
+        last_error = escape(item["last_error"] or "")
+        rows.append(
+            f"""
+            <tr>
+                <td>{escape(item["name"])}</td>
+                <td><span class="status {health_class}">{health_status}</span></td>
+                <td>{escape(format_timestamp(item["status_last_checked_at"]))}</td>
+                <td>{escape(format_timestamp(item["last_success_at"]))}</td>
+                <td>{escape(format_timestamp(item["last_failure_at"]))}</td>
+                <td>{item["consecutive_failures"]}</td>
+                <td class="error-cell">{last_error or '<span class="muted">-</span>'}</td>
+            </tr>
+            """
+        )
+
+    return "\n".join(rows)
+
+
+def get_product_health(item):
+    if item["status_last_checked_at"] is None:
+        return "Pending", "pending"
+
+    if item["consecutive_failures"]:
+        return "Failing", "failing"
+
+    return "Healthy", "healthy"
+
+
+def build_alert_rows(alerts):
+    if not alerts:
+        return '<tr><td class="muted" colspan="4">No alert events recorded.</td></tr>'
+
+    rows = []
+
+    for alert in alerts:
+        detail = escape(alert["detail"] or "")
+        rows.append(
+            f"""
+            <tr>
+                <td>{escape(format_timestamp(alert["sent_at"]))}</td>
+                <td>{escape(alert["alert_type"])}</td>
+                <td>{escape(alert["alert_key"])}</td>
+                <td class="error-cell">{detail or '<span class="muted">-</span>'}</td>
+            </tr>
+            """
+        )
+
+    return "\n".join(rows)
+
+
+def get_chart_period(period):
+    if period not in CHART_PERIODS:
+        period = DEFAULT_CHART_PERIOD
+
+    label, days = CHART_PERIODS[period]
+    return period, label, days
+
+
+def build_period_tabs(active_period):
+    links = []
+
+    for period, (label, _days) in CHART_PERIODS.items():
+        active_class = " active" if period == active_period else ""
+        current = ' aria-current="page"' if period == active_period else ""
+        links.append(
+            f'<a class="period-tab{active_class}" href="/?period={period}"'
+            f"{current}>{escape(label)}</a>"
+        )
+
+    return f'<nav class="period-tabs">{"".join(links)}</nav>'
+
+
+def build_dashboard_metrics(summaries, period_label):
+    product_count = len(summaries)
+    reached_count = sum(1 for item in summaries if item["is_target_reached"])
+    latest_timestamps = [
+        item["latest_checked_at"]
+        for item in summaries
+        if item["latest_checked_at"]
+    ]
+    latest_update = max(latest_timestamps) if latest_timestamps else None
+
+    return f"""
+    <section class="metrics" aria-label="Price summary">
+        <div class="metric">
+            <span class="metric-label">Products</span>
+            <span class="metric-value">{product_count}</span>
+            <span class="metric-sub">tracked SSDs</span>
+        </div>
+        <div class="metric">
+            <span class="metric-label">At Target</span>
+            <span class="metric-value">{reached_count}</span>
+            <span class="metric-sub">ready to consider</span>
+        </div>
+        <div class="metric">
+            <span class="metric-label">Last Updated</span>
+            <span class="metric-value">{escape(format_timestamp(latest_update))}</span>
+            <span class="metric-sub">latest price record</span>
+        </div>
+        <div class="metric">
+            <span class="metric-label">Range</span>
+            <span class="metric-value">{escape(period_label)}</span>
+            <span class="metric-sub">chart window</span>
+        </div>
+    </section>
+    """
+
+
 def build_status_metrics(latest_run, summaries):
     product_count = len(summaries)
     failing_count = sum(1 for item in summaries if item["consecutive_failures"])
@@ -827,8 +1311,11 @@ def build_status_metrics(latest_run, summaries):
         run_failures = "0"
     else:
         run_status = format_run_status(latest_run["status"])
-        run_time = format_timestamp(
-            latest_run["finished_at"] or latest_run["started_at"]
+        run_time = (
+            format_timestamp(
+                latest_run["finished_at"] or latest_run["started_at"]
+            )
+            + f" | {latest_run.get('source') or 'unknown'}"
         )
         run_counts = f"{latest_run['success_count']} / {latest_run['checked_count']}"
         run_failures = str(latest_run["failure_count"])
@@ -863,6 +1350,7 @@ def format_run_status(status):
     labels = {
         "running": "Running",
         "success": "Healthy",
+        "skipped": "Skipped",
         "partial_failure": "Partial Failure",
         "failed": "Failed",
     }
@@ -889,20 +1377,29 @@ def format_timestamp(timestamp):
     return f"{timestamp} KST"
 
 
-def build_price_chart(product_id, target_price):
-    records = list_price_records(product_id, limit=30)
+def build_price_chart(product_id, target_price, period_days, period_label):
+    records = list_price_records_for_period(
+        product_id,
+        period_days,
+        limit=MAX_CHART_RECORDS,
+    )
     ordered_records = list(reversed(records))
-    prices = [record["price"] for record in ordered_records]
 
-    if not prices:
-        return '<span class="muted">-</span>'
+    if not ordered_records:
+        return f'<span class="muted">No records in {escape(period_label)}</span>'
+
+    display_records, change_record_ids, change_count = select_price_change_records(
+        ordered_records
+    )
+    display_prices = [record["price"] for record in display_records]
+    period_prices = [record["price"] for record in ordered_records]
 
     width = 300
     height = 86
     padding_x = 10
     padding_y = 10
-    min_price = min(prices)
-    max_price = max(prices)
+    min_price = min(period_prices)
+    max_price = max(period_prices)
     display_min = min(min_price, target_price)
     display_max = max(max_price, target_price)
 
@@ -916,21 +1413,21 @@ def build_price_chart(product_id, target_price):
     points = []
     chart_points = []
 
-    if len(prices) == 1:
+    if len(display_prices) == 1:
         x = width - padding_x
         y = price_to_chart_y(
-            prices[0],
+            display_prices[0],
             display_max,
             price_range,
             padding_y,
             usable_height,
         )
         points = [(padding_x, y), (x, y)]
-        chart_points = [(x, y, ordered_records[0])]
+        chart_points = [(x, y, display_records[0])]
     else:
-        for index, record in enumerate(ordered_records):
+        for index, record in enumerate(display_records):
             price = record["price"]
-            x = padding_x + (usable_width * index / (len(prices) - 1))
+            x = padding_x + (usable_width * index / (len(display_prices) - 1))
             y = price_to_chart_y(
                 price,
                 display_max,
@@ -955,17 +1452,18 @@ def build_price_chart(product_id, target_price):
         usable_height,
     )
     latest_x, latest_y, _latest_record = chart_points[-1]
-    latest_price = prices[-1]
+    latest_price = ordered_records[-1]["price"]
     visible_points = "\n".join(
         f'<circle class="chart-point" cx="{x:.1f}" cy="{y:.1f}" r="2.5"></circle>'
         for x, y, _record in chart_points
+        if _record["id"] in change_record_ids
     )
     hover_points = "\n".join(
         build_chart_hover_point(x, y, record)
         for x, y, record in chart_points
     )
     label = escape(
-        f"Recent price trend. Current {latest_price:,} KRW. "
+        f"Price changes over {period_label}. Current {latest_price:,} KRW. "
         f"Low {min_price:,} KRW. High {max_price:,} KRW. "
         f"Target {target_price:,} KRW."
     )
@@ -973,7 +1471,7 @@ def build_price_chart(product_id, target_price):
     return f"""
     <div class="trend-panel">
         <div class="trend-head">
-            <span>Now <strong>{format_price(latest_price)}</strong></span>
+            <span><strong>{change_count}</strong> changes</span>
             <span>Target {format_price(target_price)}</span>
         </div>
         <svg class="chart" viewBox="0 0 {width} {height}" role="img" aria-label="{label}">
@@ -990,6 +1488,33 @@ def build_price_chart(product_id, target_price):
         </div>
     </div>
     """
+
+
+def select_price_change_records(ordered_records):
+    display_records = []
+    change_record_ids = set()
+    previous_price = None
+    change_count = 0
+
+    for record in ordered_records:
+        price = record["price"]
+
+        if previous_price is None:
+            display_records.append(record)
+            change_record_ids.add(record["id"])
+        elif price != previous_price:
+            display_records.append(record)
+            change_record_ids.add(record["id"])
+            change_count += 1
+
+        previous_price = price
+
+    latest_record = ordered_records[-1]
+
+    if display_records[-1]["id"] != latest_record["id"]:
+        display_records.append(latest_record)
+
+    return display_records, change_record_ids, change_count
 
 
 def build_chart_hover_point(x, y, record):
@@ -1061,11 +1586,15 @@ def product_detail(product_id: int):
 def product_prices(
     product_id: int,
     limit: int = Query(default=30, ge=1, le=200),
+    days: int = Query(default=0, ge=0, le=3650),
 ):
     product = get_product(product_id)
 
     if product is None:
         raise HTTPException(status_code=404, detail="Product not found")
+
+    if days > 0:
+        return list_price_records_for_period(product_id, days, limit)
 
     return list_price_records(product_id, limit)
 
