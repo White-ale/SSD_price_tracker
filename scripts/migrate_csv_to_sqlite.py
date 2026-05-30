@@ -17,13 +17,21 @@ def load_products_by_name():
     return {product["name"]: product for product in products}
 
 
+def get_csv_path(product_name):
+    archived_path = ROOT_DIR / "archive" / f"{product_name}.csv"
+    if archived_path.exists():
+        return archived_path
+
+    return ROOT_DIR / f"{product_name}.csv"
+
+
 def migrate_product(product):
     product_id = upsert_product(
         product["name"],
         product["url"],
         product["target_price"],
     )
-    csv_path = ROOT_DIR / f"{product['name']}.csv"
+    csv_path = get_csv_path(product["name"])
 
     if not csv_path.exists():
         print(f"[skip] {csv_path.name} not found")

@@ -228,6 +228,9 @@ SSD_price_tracker/
   requirements.txt
   README.md
   .env.example
+  archive/
+    *.csv
+    price_tracker.db
   .github/
     workflows/
       price-check.yml
@@ -928,6 +931,7 @@ main.py --api
 ## CSV 마이그레이션
 
 기존 CSV 데이터를 SQLite로 옮기려면 다음 명령어를 실행합니다.
+CSV 백업 파일은 `archive/` 폴더에 보관합니다.
 
 ```bash
 .\venv\Scripts\python.exe scripts\migrate_csv_to_sqlite.py
@@ -1152,6 +1156,7 @@ eyJ...
 ## Git 관리
 
 `price_tracker.db`는 실행 결과로 생성되는 로컬 데이터이므로 Git에 커밋하지 않습니다.
+보관이 필요한 로컬 DB 백업은 `archive/price_tracker.db`에 둘 수 있지만, 이 파일도 Git에는 올리지 않습니다.
 
 커밋해야 하는 것:
 
@@ -1167,6 +1172,7 @@ workflow 변경
 ```text
 .env
 price_tracker.db
+archive/price_tracker.db
 venv/
 ```
 
